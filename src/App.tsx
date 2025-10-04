@@ -214,8 +214,10 @@ function CalendarView({ items }: { items: Activity[] }) {
   const start = first.getDay();
   const days = new Date(y, m + 1, 0).getDate();
 
-  const cells: (number | null)[] = Array.from({ length: start }, () => null).concat(
-    Array.from({ length: days }, (_, i) => i + 1)
+ const cells: (number | null)[] = [
+  ...Array.from({ length: start }, () => null as number | null),
+  ...Array.from({ length: days }, (_, i) => (i + 1) as number | null),
+ ];
   );
 
   const byDate = groupBy(items, x => x.date);
