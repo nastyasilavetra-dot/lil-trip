@@ -208,38 +208,49 @@ function Header({ onOpenSettings }: { onOpenSettings: () => void }) {
    Calendar
    ========= */
 function CalendarView({ items }: { items: Activity[] }) {
-  const [base, setBase] = useState(new Date());
-  const y = base.getFullYear(), m = base.getMonth();
+  const [base, setBase] = React.useState(new Date());
+  const y = base.getFullYear();
+  const m = base.getMonth();
   const first = new Date(y, m, 1);
-  const start = first.getDay();
+  const start = first.getDay(); // 0..6
   const days = new Date(y, m + 1, 0).getDate();
 
- const cells: (number | null)[] = [
-  ...Array.from({ length: start }, () => null as number | null),
-  ...Array.from({ length: days }, (_, i) => (i + 1) as number | null),
- ];
-  );
+  // Build cells with explicit typing so TS doesn't whine
+  const cells: (number | null)[] = [
+    ...Array.from({ length: start }, () => null as number | null),
+    ...Array.from({ length: days }, (_, i) => (i + 1) as number | null),
+  ];
 
   const byDate = groupBy(items, x => x.date);
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
 
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
-        <div className="font-semibold">{base.toLocaleString(undefined, { month: "long", year: "numeric" })}</div>
+        <div className="font-semibold">
+          {base.toLocaleString(undefined, { month: "long", year: "numeric" })}
+        </div>
         <div className="flex gap-2">
           <Button variant="grey" onClick={() => setBase(new Date(y, m - 1, 1))}>Prev</Button>
           <Button variant="grey" onClick={() => setBase(new Date())}>Today</Button>
           <Button variant="grey" onClick={() => setBase(new Date(y, m + 1, 1))}>Next</Button>
         </div>
       </div>
+
       <div className="grid grid-cols-7 gap-2 text-sm">
-        {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => <div key={d} className="text-neutral-500">{d}</div>)}
+        {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
+          <div key={d} className="text-neutral-500">{d}</div>
+        ))}
+
         {cells.map((d, i) => (
           <div key={i} className="min-h-[90px] border border-neutral-200 rounded-xl p-2 bg-white">
-            {d && <div className="font-medium mb-1">{d}</div>}
-            {d && byDate.get(`${y}-${pad(m + 1)}-${pad(d)}`)?.slice(0, 4).map(a => (
-              <div key={a.id} className="truncate text-xs">• {a.time || ""} {a.title}</div>
-            ))}
+            {d !== null && <div className="font-medium mb-1">{d}</div>}
+            {d !== null &&
+              byDate.get(`${y}-${pad2(m + 1)}-${pad2(d)}`)?.slice(0, 4).map(a => (
+                <div key={a.id} className="truncate text-xs">• {a.time || ""} {a.title}</div>
+              ))
+            }
           </div>
         ))}
       </div>
