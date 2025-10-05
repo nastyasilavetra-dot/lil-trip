@@ -4,9 +4,9 @@ import React from "react";
    Types & constants
    ================= */
 const TYPES = ["activity", "food", "transport", "accomodation", "other"] as const;
-export type ActivityType = typeof TYPES[number];
+type ActivityType = typeof TYPES[number];
 
-export type Activity = {
+type Activity = {
   id: string;
   date: string;          // YYYY-MM-DD
   time?: string;         // HH:MM
@@ -19,12 +19,12 @@ export type Activity = {
   type: ActivityType;
 };
 
-const LS_KEY      = "trip_planner_activities_v1";
-const LS_GMAPS    = "trip_planner_google_maps_api_key";
-const LS_SAVED    = "trip_planner_saved_places";
-const LS_FB_CFG   = "trip_planner_firebase_config";
-const LS_FB_SHARE = "trip_planner_firebase_share";
-const LS_FB_SYNC  = "trip_planner_firebase_sync_enabled";
+const LS_KEY   = "trip_planner_activities_v1";
+const LS_GMAPS = "trip_planner_google_maps_api_key";
+const LS_SAVED = "trip_planner_saved_places";
+const LS_FB_CFG  = "trip_planner_firebase_config";
+const LS_FB_SHARE= "trip_planner_firebase_share";
+const LS_FB_SYNC = "trip_planner_firebase_sync_enabled";
 
 /* =========
    Utilities
@@ -41,7 +41,7 @@ function groupBy<T, K extends string | number>(arr: T[], fn: (t: T) => K) {
   const m = new Map<K, T[]>(); for (const it of arr) { const k = fn(it); const list = m.get(k) || []; list.push(it); m.set(k, list); } return m;
 }
 function compareDateTime(a: Activity, b: Activity) { return `${a.date} ${a.time||"00:00"}`.localeCompare(`${b.date} ${b.time||"00:00"}`); }
-function parseTimeToMinutes(t?: string) { if (!t) return null; const [h,m]=t.split(":" ).map(Number); return Number.isNaN(h)||Number.isNaN(m)?null:h*60+m; }
+function parseTimeToMinutes(t?: string) { if (!t) return null; const [h,m]=t.split(":").map(Number); return Number.isNaN(h)||Number.isNaN(m)?null:h*60+m; }
 function renderTimeRange(a: Activity) {
   if (!a.time) return "";
   if (!a.durationMinutes || a.durationMinutes <= 0) return a.time;
@@ -61,31 +61,8 @@ function computeOverlaps(items: Activity[]) {
   return set;
 }
 function normalizeMapsUrl(text: string) {
-  try {
-    if (!text || typeof text !== "string") return "";
-    const raw = text.trim();
-
-    // Hard stop if it looks like code or script-y junk
-    if (
-      /^javascript:/i.test(raw) ||
-      /\bwindow\.(?:add|remove)EventListener\b/i.test(raw) ||
-      /\bfunction\b|\bconst\b|\blet\b|\btry\s*\{|\bcatch\s*\(/i.test(raw) ||
-      /<\/?script/i.test(raw) ||
-      /[{}`]/.test(raw)
-    ) {
-      return "";
-    }
-
-    // Accept full links as-is
-    if (/^https?:\/\//i.test(raw)) return raw;
-
-    // Otherwise treat it as a search query
-    return `https://www.google.com/maps/search/${encodeURIComponent(raw)}`;
-  } catch {
-    return "";
-  }
+  try { if (/^https?:\/\//i.test(text)) return text.trim(); return `https://www.google.com/maps/search/${encodeURIComponent(text)}`; } catch { return text; }
 }
-
 // Prefer last !3d!4d, then q=/query=/ll=, then @lat,lng
 function parseCoordsFromUrl(url: string) {
   try {
@@ -109,7 +86,7 @@ function loadGoogleMaps(key: string): Promise<any> {
     document.head.appendChild(s);
   });
 }
-const escapeHtml = (s: string) => s.replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c] as string));
+function escapeHtml(s: string) { return s.replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;" }[c] as string)); }
 
 /* =====
    UI
@@ -123,9 +100,11 @@ function Card({ children }: { children: React.ReactNode }) { return <div classNa
 function Input(props: any) {
   const { className = "", type, ...rest } = props;
   const isNativePicker = type === "date" || type === "time";
+
   return (
     <div className="mb-3 min-w-0">
       {props.label && <div className="text-sm font-medium mb-1">{props.label}</div>}
+      {/* For date/time, give the WRAPPER the border and clip overflow */}
       <div className={isNativePicker ? "rounded-2xl border border-neutral-300 overflow-hidden" : ""}>
         <input
           {...rest}
@@ -133,8 +112,8 @@ function Input(props: any) {
           className={
             "block w-full max-w-full min-w-0 outline-none focus:ring-2 focus:ring-neutral-400 " +
             (isNativePicker
-              ? "border-0 px-3 py-2"
-              : "rounded-2xl border border-neutral-300 px-3 py-2")
+              ? "border-0 px-3 py-2"                    // input itself has no border; wrapper handles it
+              : "rounded-2xl border border-neutral-300 px-3 py-2") // normal inputs unchanged
             + (className ? " " + className : "")
           }
           style={isNativePicker ? { WebkitAppearance: "none", appearance: "none" } : undefined}
@@ -231,12 +210,7 @@ function Itinerary(
                 <div className="flex-1">
                   <div className="font-medium">{a.title} {a.city ? <span className="text-neutral-500">• {a.city}</span> : null}</div>
                   <div className="text-sm text-neutral-600">{renderTimeRange(a)} {a.type ? `• ${a.type}` : ""}</div>
-                  {(() => {
-                    const href = normalizeMapsUrl(a.location || "");
-                    return href
-                      ? <div className="text-sm"><a className="underline" href={href} target="_blank" rel="noopener noreferrer">Location</a></div>
-                   : null;
-                  })()}
+                  {a.location && <div className="text-sm"><a className="underline" href={normalizeMapsUrl(a.location)} target="_blank" rel="noopener noreferrer">Location</a></div>}
                   {a.link && <div className="text-sm"><a className="underline" href={a.link} target="_blank" rel="noopener noreferrer">Link</a></div>}
                   {a.comments && <div className="text-sm text-neutral-700 mt-1 whitespace-pre-wrap">{a.comments}</div>}
                 </div>
@@ -258,26 +232,10 @@ function Itinerary(
    ========== */
 function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
   const [savedPlaces, setSavedPlaces] = React.useState<any[]>(() => { try { return JSON.parse(localStorage.getItem(LS_SAVED)||"[]"); } catch { return []; } });
-  const suppress = React.useRef(false);
-   const gmRef = React.useRef<any>(null);
-   const mapRef = React.useRef<any>(null);
-   const infoRef = React.useRef<any>(null);
-   const markersRef = React.useRef<any[]>([]);
+  const [showActs, setShowActs] = React.useState(true);
+  const [showSaved, setShowSaved] = React.useState(true);
 
-
-  // Persist and announce local changes
-  React.useEffect(() => {
-    if (suppress.current) { suppress.current = false; return; }
-    try { localStorage.setItem(LS_SAVED, JSON.stringify(savedPlaces)); } catch {}
-    window.dispatchEvent(new CustomEvent("savedPlacesChanged", { detail: savedPlaces }));
-  }, [savedPlaces]);
-
-  // Apply remote pulls
-  React.useEffect(() => {
-    const onSet = (e: any) => { suppress.current = true; setSavedPlaces(Array.isArray(e.detail) ? e.detail : []); };
-    window.addEventListener("savedPlacesSyncSet", onSet as any);
-    return () => window.removeEventListener("savedPlacesSyncSet", onSet as any);
-  }, []);
+  React.useEffect(()=>{ localStorage.setItem(LS_SAVED, JSON.stringify(savedPlaces)); }, [savedPlaces]);
 
   function onImportGeoJSON(files: FileList | null) {
     const f = files?.[0]; if (!f) return; const reader = new FileReader();
@@ -308,74 +266,42 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
   const keyFrom = (c:{lat:number;lng:number}) => `${c.lat.toFixed(5)},${c.lng.toFixed(5)}`;
   const mergedPins = React.useMemo(()=> {
     const map = new Map<string, any>();
-    for (const s of savedPins) map.set(keyFrom(s.coord), { kind:"saved", ...s });
-    for (const p of activityPins) map.set(keyFrom(p.coord), { kind:"activity", title:p.a.title, url:p.a.location||"", coord:p.coord, address:p.a.city||"", activity:p.a });
+    if (showSaved) for (const s of savedPins) map.set(keyFrom(s.coord), { kind:"saved", ...s });
+    if (showActs)  for (const p of activityPins) map.set(keyFrom(p.coord), { kind:"activity", title:p.a.title, url:p.a.location||"", coord:p.coord, address:p.a.city||"", activity:p.a });
     return Array.from(map.values());
-  }, [activityPins, savedPins]);
+  }, [activityPins, savedPins, showActs, showSaved]);
 
-  // 1) Initialize the map once per API key
-   React.useEffect(() => {
-     if (!apiKey) return;
-     let cancelled = false;
-     loadGoogleMaps(apiKey).then((g) => {
-       if (cancelled) return;
-       gmRef.current = g;
-       const el = document.getElementById("map");
-       if (!el) return;
-       mapRef.current = new g.Map(el, {
-         center: { lat: 20, lng: 0 },
-         zoom: 2,
-         mapTypeControl: false,
-         streetViewControl: false,
-         fullscreenControl: true
-       });
-       infoRef.current = new g.InfoWindow();
-     }).catch(err => console.error(err));
-     return () => { cancelled = true; };
-   }, [apiKey]);
-
-// 2) Update markers when pins change
-   React.useEffect(() => {
-     const gm = gmRef.current;
-     const map = mapRef.current;
-     const info = infoRef.current;
-     if (!gm || !map) return;
-
-  // clear old markers
-     markersRef.current.forEach(m => m.setMap(null));
-     markersRef.current = [];
-
-  // fit bounds and add new markers
-     const bounds = new gm.LatLngBounds();
-     mergedPins.forEach(p => bounds.extend(p.coord));
-     if (!bounds.isEmpty()) map.fitBounds(bounds);
-
-     markersRef.current = mergedPins.map(p => {
-       const marker = new gm.Marker({
-         position: p.coord,
-         map,
-         icon: { path: gm.SymbolPath.CIRCLE, scale: 6, strokeWeight: 2, strokeColor: p.kind === "activity" ? "#ef4444" : "#000", fillOpacity: 0 }
-       });
-       marker.addListener("click", () => {
-         const href = normalizeMapsUrl(p.url || "");
-         const safeUrl = href || `https://www.google.com/maps/@${p.coord.lat},${p.coord.lng},18z`;
-         const html = `<div style="max-width:220px; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
-           <div style="font-weight:600;">${escapeHtml(p.title || (p.kind==="activity"? p.activity?.title : "Saved place"))}</div>
-           ${p.address? `<div style="color:#6b7280; font-size:12px;">${escapeHtml(p.address)}</div>` : ""}
-           <div style="margin-top:8px"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="text-decoration:underline">Open in Maps</a></div>
-         </div>`;
-         info.setContent(html); info.open({ map, anchor: marker });
-       });
-       return marker;
-     });
-   }, [mergedPins]);
-
+  React.useEffect(()=> {
+    if (!apiKey) return;
+    let gm:any; let map:any; let info:any; let markers:any[]=[];
+    loadGoogleMaps(apiKey).then((g)=> {
+      gm=g;
+      const el=document.getElementById("map"); if (!el) return;
+      map=new gm.Map(el, { center:{lat:20,lng:0}, zoom:2, mapTypeControl:false, streetViewControl:false, fullscreenControl:true });
+      info=new gm.InfoWindow();
+      const bounds=new gm.LatLngBounds(); mergedPins.forEach(p=> bounds.extend(p.coord)); if (!bounds.isEmpty()) map.fitBounds(bounds);
+      markers = mergedPins.map(p=> {
+        const marker = new gm.Marker({ position:p.coord, map, icon:{ path:gm.SymbolPath.CIRCLE, scale:6, strokeWeight:2, strokeColor: p.kind==="activity" ? "#ef4444" : "#000", fillOpacity:0 } });
+        marker.addListener("click", ()=> {
+          const safeUrl = p.url ? normalizeMapsUrl(p.url) : `https://www.google.com/maps/@${p.coord.lat},${p.coord.lng},18z`;
+          const html = `<div style="max-width:220px; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+            <div style="font-weight:600;">${escapeHtml(p.title || (p.kind==="activity"? p.activity?.title : "Saved place"))}</div>
+            ${p.address? `<div style="color:#6b7280; font-size:12px;">${escapeHtml(p.address)}</div>` : ""}
+            <div style="margin-top:8px"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="text-decoration:underline">Open in Maps</a></div>
+          </div>`;
+          info.setContent(html); info.open({ map, anchor: marker });
+        });
+        return marker;
+      });
+    }).catch(err=> console.error(err));
+    return ()=> { markers.forEach(m=> m.setMap(null)); };
+  }, [apiKey, mergedPins]);
 
   return (
     <div>
       <div className="flex items-center gap-4 mb-4">
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={true} onChange={()=>{}} /> <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#ef4444"}} /> Activities</span></label>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={true} onChange={()=>{}} /> <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#000"}} /> Saved</span></label>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showActs} onChange={(e)=>setShowActs(e.target.checked)} /> <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#ef4444"}} /> Activities</span></label>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={showSaved} onChange={(e)=>setShowSaved(e.target.checked)} /> <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full inline-block" style={{background:"#000"}} /> Saved</span></label>
       </div>
 
       <div className="flex items-center justify-between mb-3">
@@ -404,19 +330,16 @@ export default function App() {
   const [apiKey, setApiKey] = React.useState(localStorage.getItem(LS_GMAPS) || "");
   const [showSettings, setShowSettings] = React.useState(false);
 
-  // refs (single source of truth)
-  const itemsRef = React.useRef<Activity[]>(items);
-   React.useEffect(() => { itemsRef.current = items; }, [items]);
-   const savedRef  = React.useRef<any[]>([]);
-   const suppressRef = React.useRef(false);
-   const lastLocalEditRef = React.useRef(0);
+// editing + success banner
+const [editingId, setEditingId] = React.useState<string | null>(null);
+const [flash, setFlash] = React.useState<{ kind: "add" | "update"; text: string } | null>(null);
 
-
-  // editing + success banner
-  const [editingId, setEditingId] = React.useState<string | null>(null);
-  const [flash, setFlash] = React.useState<{ kind: "add" | "update"; text: string } | null>(null);
-
-  React.useEffect(() => { if (!flash) return; const t = setTimeout(() => setFlash(null), 2200); return () => clearTimeout(t); }, [flash]);
+// auto-hide the banner
+React.useEffect(() => {
+  if (!flash) return;
+  const t = setTimeout(() => setFlash(null), 2200);
+  return () => clearTimeout(t);
+}, [flash]);
 
   // Firebase sync state
   const [fbConfigText, setFbConfigText] = React.useState(()=> localStorage.getItem(LS_FB_CFG) || "");
@@ -426,26 +349,9 @@ export default function App() {
   React.useEffect(()=> saveActivities(items), [items]);
   React.useEffect(()=> saveApiKey(apiKey), [apiKey]);
 
-  // Items ref + announce local edits safely
- React.useEffect(() => {
-  itemsRef.current = items;
-  if (!suppressRef.current) {
-    // this change came from the UI, not Firestore
-    lastLocalEditRef.current = Date.now();
-    window.dispatchEvent(new Event("localActivitiesChanged"));
-  }
-  // if the change came from Firestore, we ignore announcing it
-  suppressRef.current = false;
-}, [items]);
-   React.useEffect(() => {
-     if (!syncEnabled) return;
-     try { window.dispatchEvent(new Event("syncForcePush")); } catch {}
-   }, [items, syncEnabled]);
-
-   React.useEffect(() => {
-     if (!syncEnabled) return;
-     try { window.dispatchEvent(new Event("syncForcePush")); } catch {}
-   }, [items, syncEnabled]);
+  // Keep refs for sync
+  const itemsRef = React.useRef(items);
+  React.useEffect(()=> { itemsRef.current = items; window.dispatchEvent(new Event("localActivitiesChanged")); }, [items]);
 
   React.useEffect(()=> {
     localStorage.setItem(LS_FB_CFG, fbConfigText||"");
@@ -453,14 +359,16 @@ export default function App() {
     localStorage.setItem(LS_FB_SYNC, String(syncEnabled));
   }, [fbConfigText, fbShareCode, syncEnabled]);
 
-  // Bridge: keep savedRef in sync from MapView events
+  // Saved places bridge for sync
+  const savedRef = React.useRef<any[]>([]);
   React.useEffect(()=> {
-    // initial
-    try { savedRef.current = JSON.parse(localStorage.getItem(LS_SAVED)||"[]"); } catch { savedRef.current = []; }
     const onSaved = (e:any) => { savedRef.current = Array.isArray(e.detail) ? e.detail : []; };
     window.addEventListener("savedPlacesChanged", onSaved as any);
     return ()=> window.removeEventListener("savedPlacesChanged", onSaved as any);
   }, []);
+  function applySavedPlacesFromRemote(arr:any[]) {
+    window.dispatchEvent(new CustomEvent("savedPlacesSyncSet", { detail: Array.isArray(arr)? arr : [] }));
+  }
 
   // Start Firebase sync
   useFirebaseSync({
@@ -469,88 +377,97 @@ export default function App() {
     shareCode: fbShareCode,
     getActivities: () => itemsRef.current,
     getSavedPlaces: () => savedRef.current,
-    setFromRemote: (data: any) => {
-     const nextActs  = Array.isArray(data?.activities)   ? data.activities   : undefined;
-     const nextSaved = Array.isArray(data?.saved_places) ? data.saved_places : undefined;
-
-  // Firestore server timestamp from the doc, if present
-     const serverMillis =
-       data?.updated_at && typeof data.updated_at?.toMillis === "function"
-         ? data.updated_at.toMillis()
-         : 0;
-
-  // If we edited locally more recently than the server doc, ignore this snapshot.
-     if (serverMillis && lastLocalEditRef.current && serverMillis < lastLocalEditRef.current - 150) {
-       return;
-     }
-
-  // Skip if identical to what we already have
-     const sameActs  = nextActs  ? JSON.stringify(nextActs)  === JSON.stringify(itemsRef.current)  : true;
-     const sameSaved = nextSaved ? JSON.stringify(nextSaved) === JSON.stringify(savedRef.current) : true;
-     if (sameActs && sameSaved) return;
-
-  // Apply server state without announcing a local change
-     suppressRef.current = true;
-     if (nextActs)  setItems(nextActs);
-     if (nextSaved) window.dispatchEvent(new CustomEvent("savedPlacesSyncSet", { detail: nextSaved }));
-   }
+    setFromRemote: (data:any) => {
+      if (data?.activities) setItems(data.activities);
+      if (data?.saved_places) applySavedPlacesFromRemote(data.saved_places);
+    }
   });
 
   const sorted   = React.useMemo(()=> [...items].sort(compareDateTime), [items]);
   const overlaps = React.useMemo(()=> computeOverlaps(sorted), [sorted]);
 
   const [form, setForm] = React.useState<Partial<Activity>>({ date: todayStr(), type: "activity" });
-  function saveActivity() {
-    if (!form.date || !form.title) { alert("Date and Title are required"); return; }
-    const payload: Activity = {
-      id: editingId ?? uid(),
-      date: form.date!,
-      time: form.time?.trim() ? form.time : undefined,
-      durationMinutes: form.durationMinutes && form.durationMinutes > 0 ? Number(form.durationMinutes) : undefined,
-      title: form.title!.trim(),
-      city: form.city?.trim() || undefined,
-      location: form.location?.trim() || undefined,
-      comments: form.comments?.trim() || undefined,
-      link: form.link?.trim() || undefined,
-      type: (form.type as ActivityType) || "activity",
-    };
+ function saveActivity() {
+  if (!form.date || !form.title) {
+    alert("Date and Title are required");
+    return;
+     }
+     const payload: Activity = {
+       id: editingId ?? uid(),
+       date: form.date!,
+       time: form.time?.trim() ? form.time : undefined,
+       durationMinutes:
+         form.durationMinutes && form.durationMinutes > 0
+           ? Number(form.durationMinutes)
+           : undefined,
+       title: form.title!.trim(),
+       city: form.city?.trim() || undefined,
+       location: form.location?.trim() || undefined,
+       comments: form.comments?.trim() || undefined,
+       link: form.link?.trim() || undefined,
+       type: (form.type as ActivityType) || "activity",
+     };
 
     if (editingId) {
-      setItems(prev => prev.map(x => (x.id === editingId ? payload : x)));
-      setFlash({ kind: "update", text: "Activity updated" });
-      setEditingId(null);
-      setForm({ date: todayStr(), type: "activity" });
-      setTab("list");
-      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-    } else {
-      setItems(prev => [...prev, payload]);
-      setFlash({ kind: "add", text: "Activity added" });
-      setForm(prev => ({
-        date: prev.date || todayStr(),
-        city: prev.city || "",
-        type: (prev.type as ActivityType) || "activity",
-        time: "",
-        durationMinutes: undefined,
-        title: "",
-        location: "",
-        comments: "",
-        link: ""
-      }));
-    }
-  }
-  function cancelEditing() { setEditingId(null); setForm({ date: todayStr(), type: "activity" }); }
+    // Update existing, then go to list
+    setItems(prev => prev.map(x => (x.id === editingId ? payload : x)));
+    setFlash({ kind: "update", text: "Activity updated" });
+    setEditingId(null);
+    setForm({ date: todayStr(), type: "activity" });
+    setTab("list");
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+     } else {
+    // Add new, stay on form, keep helpful fields for rapid entry
+    setItems(prev => [...prev, payload]);
+    setFlash({ kind: "add", text: "Activity added" });
+
+    // keep date/city/type; clear the rest
+    setForm(prev => ({
+      date: prev.date || todayStr(),
+      city: prev.city || "",
+      type: (prev.type as ActivityType) || "activity",
+      time: "",
+      durationMinutes: undefined,
+      title: "",
+      location: "",
+      comments: "",
+      link: ""
+       }));
+     }
+   }
+function cancelEditing() {
+  setEditingId(null);
+  setForm({ date: todayStr(), type: "activity" });
+}
+  
   function removeActivity(id: string) { setItems(prev => prev.filter(x=> x.id!==id)); }
   function startEdit(a: Activity) {
-    setEditingId(a.id);
-    setForm({ date:a.date, time:a.time, durationMinutes:a.durationMinutes, title:a.title, city:a.city, location:a.location, comments:a.comments, link:a.link, type:a.type });
-    setTab("add");
-    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-  }
+  setEditingId(a.id);
+  setForm({
+       date: a.date,
+       time: a.time,
+       durationMinutes: a.durationMinutes,
+       title: a.title,
+       city: a.city,
+       location: a.location,
+       comments: a.comments,
+       link: a.link,
+       type: a.type,
+     });
+     setTab("add");
+     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+   }
   function TabBtn({ id, label }:{ id:"add"|"list"|"cal"|"map"; label:string }) {
     const active = tab===id; const cls = active? "bg-black text-white" : "bg-white text-black";
     return (
-      <button onClick={()=>setTab(id)} className={`rounded-2xl px-4 py-2 border border-neutral-300 ${cls}`} style={{ flexShrink: 0 }}>{label}</button>
-    );
+     <button
+       onClick={() => setTab(id)}
+       className={`rounded-2xl px-4 py-2 border border-neutral-300 ${cls}`}
+       style={{ flexShrink: 0 }}
+     >
+    {label}
+     </button>
+   );
   }
 
   return (
@@ -558,21 +475,39 @@ export default function App() {
       <Header onOpenSettings={()=>setShowSettings(true)} />
 
       <main className="max-w-6xl mx-auto px-4 pt-20 pb-24">
-        <div className="flex gap-3 mb-6 overflow-x-auto -mx-4 px-4" style={{ WebkitOverflowScrolling: "touch" }}>
+        <div
+        className="flex gap-3 mb-6 overflow-x-auto -mx-4 px-4"
+        style={{ WebkitOverflowScrolling: "touch" }}
+         >
+
           <TabBtn id="add" label="Add activity" />
           <TabBtn id="list" label="My Itinerary" />
           <TabBtn id="cal" label="Calendar view" />
           <TabBtn id="map" label="Map view" />
         </div>
+         {flash && (
+        <div
+          className={`mb-4 rounded-2xl border px-4 py-2 text-sm ${
+            flash.kind === "add"
+              ? "bg-green-50 border-green-200 text-green-800"
+              : "bg-blue-50 border-blue-200 text-blue-800"
+             }`}
+          role="status"
+          aria-live="polite"
+        >
+       {flash.text}
+        </div>
+      )}
 
-        {flash && (
-          <div className={`mb-4 rounded-2xl border px-4 py-2 text-sm ${flash.kind === "add" ? "bg-green-50 border-green-200 text-green-800" : "bg-blue-50 border-blue-200 text-blue-800"}`} role="status" aria-live="polite">{flash.text}</div>
-        )}
 
         {tab==="add" && (
           <Card>
-            <div className="text-2xl font-semibold mb-1">{editingId ? "Edit activity" : "Add new activity"}</div>
-            <div className="text-sm text-neutral-500 mb-4">{editingId ? "Update the fields and save your changes." : "Fill in the fields and click Add activity."}</div>
+            <div className="text-2xl font-semibold mb-1">
+              {editingId ? "Edit activity" : "Add new activity"}
+            </div>
+            <div className="text-sm text-neutral-500 mb-4">
+               {editingId ? "Update the fields and save your changes." : "Fill in the fields and click Add activity."}
+            </div>
             <div className="grid md:grid-cols-2 gap-4 min-w-0">
               <Input label="Date" type="date" value={form.date||""} onChange={(e:any)=>setForm(f=>({ ...f, date:e.target.value }))} />
               <Input label="Time" type="time" value={form.time||""} onChange={(e:any)=>setForm(f=>({ ...f, time:e.target.value }))} />
@@ -590,8 +525,21 @@ export default function App() {
               <Input label="Link (optional)" value={form.link||""} onChange={(e:any)=>setForm(f=>({ ...f, link:e.target.value }))} placeholder="https://…" />
             </div>
             <div className="flex gap-2 mt-4">
-              <Button onClick={saveActivity}>{editingId ? "Save changes" : "Add activity"}</Button>
-              <Button variant="grey" onClick={()=>{ if (editingId) { cancelEditing(); } else { setForm({ date: todayStr(), type: "activity" }); } }}>{editingId ? "Cancel editing" : "Clear"}</Button>
+              <Button onClick={saveActivity}>
+                {editingId ? "Save changes" : "Add activity"}
+              </Button>
+              <Button
+                variant="grey"
+                onClick={() => {
+                  if (editingId) {
+                   cancelEditing();
+                  } else {
+                    setForm({ date: todayStr(), type: "activity" });
+                  }
+                  }}
+              >
+             {editingId ? "Cancel editing" : "Clear"}
+              </Button>
             </div>
           </Card>
         )}
@@ -599,7 +547,12 @@ export default function App() {
         {tab==="list" && (
           <Card>
             <div className="text-2xl font-semibold mb-4">My Itinerary</div>
-            <Itinerary items={sorted} overlaps={overlaps} onEdit={startEdit} onRemove={removeActivity} />
+            <Itinerary
+              items={sorted}
+              overlaps={overlaps}
+              onEdit={startEdit}
+               onRemove={removeActivity}
+            />
           </Card>
         )}
 
@@ -647,79 +600,67 @@ function useFirebaseSync({
   enabled: boolean; configText: string; shareCode: string;
   getActivities: () => any[]; getSavedPlaces: () => any[]; setFromRemote: (d: any) => void;
 }) {
+  const startedRef = React.useRef(false);
+  const debRef = React.useRef<any>(null);
+
   React.useEffect(() => {
     if (!enabled) return;
+    if (startedRef.current) return;
     if (!configText || !shareCode) return;
+    startedRef.current = true;
 
-    let fb: any = null;
-    let ref: any = null;
     let unsub: any = null;
-    let cancelled = false;
-    let debounceTimer: any = null;
-
-    const push = async () => {
-      try {
-        if (!ref || !fb) return;
-        await ref.set(
-          {
-            activities: getActivities() || [],
-            saved_places: getSavedPlaces() || [],
-            updated_at: fb.firestore.FieldValue.serverTimestamp(),
-            version: 1,
-          },
-          { merge: true }
-        );
-      } catch (e) {
-        console.error("[Sync] push failed", e);
-      }
-    };
-
-    const onLocal = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(push, 600); };
-    const force = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(push, 0); };
+    let firebase: any = null;
 
     (async () => {
       try {
         const cfg = JSON.parse(configText);
-        fb = await loadFirebaseCompat();
-        if (fb.apps?.length) fb.app(); else fb.initializeApp(cfg);
-        await fb.auth().signInAnonymously();
+        firebase = await loadFirebaseCompat();
+        if (firebase.apps?.length) firebase.app(); else firebase.initializeApp(cfg);
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+        await auth.signInAnonymously().catch(() => {});
+        const ref = db.collection("itineraries").doc(String(shareCode));
 
-        const db = fb.firestore();
-        ref = db.collection("itineraries").doc(String(shareCode).trim());
+        const snap = await ref.get();
+        if (snap.exists) {
+          const d = snap.data();
+          setFromRemote({ activities: d.activities || [], saved_places: d.saved_places || [] });
+        }
 
-        // Ensure doc exists with current local state
-        await push();
-        if (cancelled) return;
-
-        // Live updates from server
         unsub = ref.onSnapshot((s: any) => {
           if (!s.exists) return;
-          const d = s.data() || {};
-          const acts  = Array.isArray(d.activities)   ? d.activities   : [];
-          const saved = Array.isArray(d.saved_places) ? d.saved_places : [];
-          const same =
-            JSON.stringify(acts)  === JSON.stringify(getActivities() || []) &&
-            JSON.stringify(saved) === JSON.stringify(getSavedPlaces() || []);
-          if (same) return;
-          setFromRemote({ activities: acts, saved_places: saved, updated_at: (s.data() || {}).updated_at });
+          const d = s.data();
+          setFromRemote({ activities: d.activities || [], saved_places: d.saved_places || [] });
         });
-
-        window.addEventListener("localActivitiesChanged", onLocal);
-        window.addEventListener("savedPlacesChanged", onLocal as any);
-         const force = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(push, 0); };
-         window.addEventListener("syncForcePush", force);
-      } catch (e) {
-        console.error("[Sync] init failed", e);
-      }
+      } catch (e) { console.error("[Sync] init failed", e); }
     })();
 
+    const onLocalChange = () => {
+      if (!enabled || !shareCode || !firebase) return;
+      clearTimeout(debRef.current);
+      debRef.current = setTimeout(async () => {
+        try {
+          const ref = firebase.firestore().collection("itineraries").doc(String(shareCode));
+          const payload = {
+            activities: getActivities() || [],
+            saved_places: getSavedPlaces() || [],
+            updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+            version: 1
+          };
+          await ref.set(payload, { merge: true });
+        } catch (e) { console.error("[Sync] save failed", e); }
+      }, 800);
+    };
+
+    const poke = () => onLocalChange();
+    window.addEventListener("localActivitiesChanged", poke);
+    window.addEventListener("savedPlacesChanged", poke);
+
     return () => {
-      cancelled = true;
-      clearTimeout(debounceTimer);
-      try { window.removeEventListener("localActivitiesChanged", onLocal); } catch {}
-      try { window.removeEventListener("savedPlacesChanged", onLocal as any); } catch {}
-      try { window.removeEventListener("syncForcePush", force); } catch {}
-      try { if (unsub) unsub(); } catch {}
+      window.removeEventListener("localActivitiesChanged", poke);
+      window.removeEventListener("savedPlacesChanged", poke);
+      if (unsub) unsub();
     };
   }, [enabled, configText, shareCode, getActivities, getSavedPlaces, setFromRemote]);
 }
@@ -742,3 +683,4 @@ function loadFirebaseCompat(): Promise<any> {
     })();
   });
 }
+
