@@ -344,6 +344,8 @@ export default function App() {
    React.useEffect(() => { itemsRef.current = items; }, [items]);
    const savedRef  = React.useRef<any[]>([]);
    const suppressRef = React.useRef(false);
+   const lastLocalEditRef = React.useRef(0);
+
 
   // editing + success banner
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -360,13 +362,17 @@ export default function App() {
   React.useEffect(()=> saveApiKey(apiKey), [apiKey]);
 
   // Items ref + announce local edits safely
-  React.useEffect(()=> {
-    itemsRef.current = items;
-    if (!suppressRef.current) {
-      window.dispatchEvent(new Event("localActivitiesChanged"));
-    }
-    suppressRef.current = false;
-  }, [items]);
+ React.useEffect(() => {
+  itemsRef.current = items;
+  if (!suppressRef.current) {
+    // this change came from the UI, not Firestore
+    lastLocalEditRef.current = Date.now();
+    window.dispatchEvent(new Event("localActivitiesChanged"));
+  }
+  // if the change came from Firestore, we ignore announcing it
+  suppressRef.current = false;
+}, [items]);
+
 
   React.useEffect(()=> {
     localStorage.setItem(LS_FB_CFG, fbConfigText||"");
@@ -395,17 +401,30 @@ export default function App() {
     getActivities: () => itemsRef.current,
     getSavedPlaces: () => savedRef.current,
     setFromRemote: (data: any) => {
-      const nextActs  = Array.isArray(data?.activities)   ? data.activities   : undefined;
-      const nextSaved = Array.isArray(data?.saved_places) ? data.saved_places : undefined;
+     const nextActs  = Array.isArray(data?.activities)   ? data.activities   : undefined;
+     const nextSaved = Array.isArray(data?.saved_places) ? data.saved_places : undefined;
 
-      const sameActs  = nextActs  ? JSON.stringify(nextActs)  === JSON.stringify(itemsRef.current)  : true;
-      const sameSaved = nextSaved ? JSON.stringify(nextSaved) === JSON.stringify(savedRef.current) : true;
-      if (sameActs && sameSaved) return;
+  // Firestore server timestamp from the doc, if present
+     const serverMillis =
+       data?.updated_at && typeof data.updated_at?.toMillis === "function"
+         ? data.updated_at.toMillis()
+         : 0;
 
-      suppressRef.current = true; // this render is from server
-      if (nextActs)  setItems(nextActs);
-      if (nextSaved) applySavedPlacesFromRemote(nextSaved);
-    }
+  // If we edited locally more recently than the server doc, ignore this snapshot.
+     if (serverMillis && lastLocalEditRef.current && serverMillis < lastLocalEditRef.current - 150) {
+       return;
+     }
+
+  // Skip if identical to what we already have
+     const sameActs  = nextActs  ? JSON.stringify(nextActs)  === JSON.stringify(itemsRef.current)  : true;
+     const sameSaved = nextSaved ? JSON.stringify(nextSaved) === JSON.stringify(savedRef.current) : true;
+     if (sameActs && sameSaved) return;
+
+  // Apply server state without announcing a local change
+     suppressRef.current = true;
+     if (nextActs)  setItems(nextActs);
+     if (nextSaved) applySavedPlacesFromRemote(nextSaved);
+   }
   });
 
   const sorted   = React.useMemo(()=> [...items].sort(compareDateTime), [items]);
@@ -612,7 +631,7 @@ function useFirebaseSync({
             JSON.stringify(acts)  === JSON.stringify(getActivities() || []) &&
             JSON.stringify(saved) === JSON.stringify(getSavedPlaces() || []);
           if (same) return;
-          setFromRemote({ activities: acts, saved_places: saved });
+          setFromRemote({ activities: acts, saved_places: saved, updated_at: (s.data() || {}).updated_at });
         });
 
         window.addEventListener("localActivitiesChanged", onLocal);
