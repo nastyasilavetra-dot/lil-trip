@@ -65,10 +65,13 @@ function normalizeMapsUrl(text: string) {
     if (!text || typeof text !== "string") return "";
     const raw = text.trim();
 
-    // Hard guard against accidental code getting into the field
-    if (/[{}]|window\.removeEventListener|addEventListener|<\/?script/i.test(raw)) return "";
+    // Block only dangerous schemes, not random text
+    if (/^javascript:/i.test(raw)) return "";
 
+    // Accept full links as-is
     if (/^https?:\/\//i.test(raw)) return raw;
+
+    // Fallback: construct a safe Google Maps search URL
     return `https://www.google.com/maps/search/${encodeURIComponent(raw)}`;
   } catch {
     return "";
@@ -220,7 +223,12 @@ function Itinerary(
                 <div className="flex-1">
                   <div className="font-medium">{a.title} {a.city ? <span className="text-neutral-500">• {a.city}</span> : null}</div>
                   <div className="text-sm text-neutral-600">{renderTimeRange(a)} {a.type ? `• ${a.type}` : ""}</div>
-                  {a.location && <div className="text-sm"><a className="underline" href={normalizeMapsUrl(a.location)} target="_blank" rel="noopener noreferrer">Location</a></div>}
+                  {(() => {
+                    const href = normalizeMapsUrl(a.location || "");
+                    return href
+                      ? <div className="text-sm"><a className="underline" href={href} target="_blank" rel="noopener noreferrer">Location</a></div>
+                   : null;
+                  })()}
                   {a.link && <div className="text-sm"><a className="underline" href={a.link} target="_blank" rel="noopener noreferrer">Link</a></div>}
                   {a.comments && <div className="text-sm text-neutral-700 mt-1 whitespace-pre-wrap">{a.comments}</div>}
                 </div>
@@ -243,6 +251,11 @@ function Itinerary(
 function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
   const [savedPlaces, setSavedPlaces] = React.useState<any[]>(() => { try { return JSON.parse(localStorage.getItem(LS_SAVED)||"[]"); } catch { return []; } });
   const suppress = React.useRef(false);
+   const gmRef = React.useRef<any>(null);
+   const mapRef = React.useRef<any>(null);
+   const infoRef = React.useRef<any>(null);
+   const markersRef = React.useRef<any[]>([]);
+
 
   // Persist and announce local changes
   React.useEffect(() => {
@@ -292,31 +305,63 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
     return Array.from(map.values());
   }, [activityPins, savedPins]);
 
-  React.useEffect(()=> {
-    if (!apiKey) return;
-    let gm:any; let map:any; let info:any; let markers:any[]=[];
-    loadGoogleMaps(apiKey).then((g)=> {
-      gm=g;
-      const el=document.getElementById("map"); if (!el) return;
-      map=new gm.Map(el, { center:{lat:20,lng:0}, zoom:2, mapTypeControl:false, streetViewControl:false, fullscreenControl:true });
-      info=new gm.InfoWindow();
-      const bounds=new gm.LatLngBounds(); mergedPins.forEach(p=> bounds.extend(p.coord)); if (!bounds.isEmpty()) map.fitBounds(bounds);
-      markers = mergedPins.map(p=> {
-        const marker = new gm.Marker({ position:p.coord, map, icon:{ path:gm.SymbolPath.CIRCLE, scale:6, strokeWeight:2, strokeColor: p.kind==="activity" ? "#ef4444" : "#000", fillOpacity:0 } });
-        marker.addListener("click", ()=> {
-          const safeUrl = p.url ? normalizeMapsUrl(p.url) : `https://www.google.com/maps/@${p.coord.lat},${p.coord.lng},18z`;
-          const html = `<div style="max-width:220px; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
-            <div style="font-weight:600;">${escapeHtml(p.title || (p.kind==="activity"? p.activity?.title : "Saved place"))}</div>
-            ${p.address? `<div style="color:#6b7280; font-size:12px;">${escapeHtml(p.address)}</div>` : ""}
-            <div style="margin-top:8px"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="text-decoration:underline">Open in Maps</a></div>
-          </div>`;
-          info.setContent(html); info.open({ map, anchor: marker });
-        });
-        return marker;
-      });
-    }).catch(err=> console.error(err));
-    return ()=> { markers.forEach(m=> m.setMap(null)); };
-  }, [apiKey, mergedPins]);
+  // 1) Initialize the map once per API key
+   React.useEffect(() => {
+     if (!apiKey) return;
+     let cancelled = false;
+     loadGoogleMaps(apiKey).then((g) => {
+       if (cancelled) return;
+       gmRef.current = g;
+       const el = document.getElementById("map");
+       if (!el) return;
+       mapRef.current = new g.Map(el, {
+         center: { lat: 20, lng: 0 },
+         zoom: 2,
+         mapTypeControl: false,
+         streetViewControl: false,
+         fullscreenControl: true
+       });
+       infoRef.current = new g.InfoWindow();
+     }).catch(err => console.error(err));
+     return () => { cancelled = true; };
+   }, [apiKey]);
+
+// 2) Update markers when pins change
+   React.useEffect(() => {
+     const gm = gmRef.current;
+     const map = mapRef.current;
+     const info = infoRef.current;
+     if (!gm || !map) return;
+
+  // clear old markers
+     markersRef.current.forEach(m => m.setMap(null));
+     markersRef.current = [];
+
+  // fit bounds and add new markers
+     const bounds = new gm.LatLngBounds();
+     mergedPins.forEach(p => bounds.extend(p.coord));
+     if (!bounds.isEmpty()) map.fitBounds(bounds);
+
+     markersRef.current = mergedPins.map(p => {
+       const marker = new gm.Marker({
+         position: p.coord,
+         map,
+         icon: { path: gm.SymbolPath.CIRCLE, scale: 6, strokeWeight: 2, strokeColor: p.kind === "activity" ? "#ef4444" : "#000", fillOpacity: 0 }
+       });
+       marker.addListener("click", () => {
+         const href = normalizeMapsUrl(p.url || "");
+         const safeUrl = href || `https://www.google.com/maps/@${p.coord.lat},${p.coord.lng},18z`;
+         const html = `<div style="max-width:220px; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+           <div style="font-weight:600;">${escapeHtml(p.title || (p.kind==="activity"? p.activity?.title : "Saved place"))}</div>
+           ${p.address? `<div style="color:#6b7280; font-size:12px;">${escapeHtml(p.address)}</div>` : ""}
+           <div style="margin-top:8px"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="text-decoration:underline">Open in Maps</a></div>
+         </div>`;
+         info.setContent(html); info.open({ map, anchor: marker });
+       });
+       return marker;
+     });
+   }, [mergedPins]);
+
 
   return (
     <div>
