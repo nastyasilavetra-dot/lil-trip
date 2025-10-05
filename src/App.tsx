@@ -405,7 +405,7 @@ React.useEffect(() => {
       link: ""
        }));
      }
-
+   }
 function cancelEditing() {
   setEditingId(null);
   setForm({ date: todayStr(), type: "activity" });
