@@ -160,7 +160,7 @@ function Button({ children, onClick, variant, className }: { children: React.Rea
   const theme= variant==="grey"?"bg-neutral-200 hover:bg-neutral-300 text-black": variant==="ghost"?"bg-transparent hover:bg-neutral-100 text-black":"bg-black text-white hover:bg-neutral-800";
   return <button onClick={onClick} className={`${base} ${theme} ${className||""}`}>{children}</button>;
 }
-function Card({ children }: { children: React.ReactNode }) { return <div className="bg-white rounded-2xl border border-neutral-200 p-4 md:p-6 mb-6">{children}</div>; }
+function Card({ children }: { children: React.ReactNode }) { return <div className="relative z-0 bg-white rounded-2xl border border-neutral-200 p-4 md:p-6 mb-6">{children}</div>; }
 function Input(props: any) {
   const { className = "", type, ...rest } = props;
   const isNativePicker = type === "date" || type === "time";
@@ -200,7 +200,7 @@ function TextArea(props: any) {
 }
 function Header({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
-    <div className="fixed inset-x-0 top-0 h-16 z-50 border-b border-neutral-200 bg-neutral-50/90 backdrop-blur">
+    <div className="fixed inset-x-0 top-0 h-16 z-50 border-b border-neutral-200 bg-neutral-50/95">
       <div className="max-w-6xl mx-auto h-full px-4 flex items-center gap-3">
         <div className="w-8 h-8 rounded-full bg-black text-white grid place-items-center font-semibold select-none">TI</div>
         <div className="font-semibold">Travel Itinerary Planner</div>
@@ -576,10 +576,11 @@ function cancelEditing() {
     <div className="min-h-screen bg-neutral-100 text-black overflow-x-hidden">
       <Header onOpenSettings={()=>setShowSettings(true)} />
 
-      <main className="max-w-6xl mx-auto px-4 pt-20 pb-24">
+      <main className="isolate max-w-6xl mx-auto px-4 pt-20 pb-24">
         <div
-        className="relative z-40 flex gap-3 mb-6 overflow-x-auto px-2"
+        className="sticky top-16 z-[70] flex gap-3 mb-6 overflow-x-auto px-2 bg-neutral-100"
          >
+
 
 
           <TabBtn id="add" label="Add activity" />
