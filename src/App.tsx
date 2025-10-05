@@ -3,7 +3,7 @@ import React from "react";
 /* =================
    Types & constants
    ================= */
-const TYPES = ["activity", "food", "transport", "accomodation", "other"] as const;
+const TYPES = ["activity", "food", "transport", "accommodation", "other"] as const;
 type ActivityType = typeof TYPES[number];
 
 type Activity = {
@@ -17,6 +17,7 @@ type Activity = {
   comments?: string;
   link?: string;
   type: ActivityType;
+  updatedAt?: number;    // unix ms, used for resolving conflicts later
 };
 
 const LS_KEY   = "trip_planner_activities_v1";
@@ -25,6 +26,7 @@ const LS_SAVED = "trip_planner_saved_places";
 const LS_FB_CFG  = "trip_planner_firebase_config";
 const LS_FB_SHARE= "trip_planner_firebase_share";
 const LS_FB_SYNC = "trip_planner_firebase_sync_enabled";
+const LS_DEVICE = "trip_planner_device_id";
 
 /* =========
    Utilities
@@ -235,7 +237,23 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
   const [showActs, setShowActs] = React.useState(true);
   const [showSaved, setShowSaved] = React.useState(true);
 
-  React.useEffect(()=>{ localStorage.setItem(LS_SAVED, JSON.stringify(savedPlaces)); }, [savedPlaces]);
+   React.useEffect(() => {
+     const apply = (e: any) => {
+       const arr = Array.isArray(e.detail) ? e.detail : [];
+       setSavedPlaces(arr);
+     };
+     window.addEventListener("savedPlacesSyncSet", apply as any);
+     return () => window.removeEventListener("savedPlacesSyncSet", apply as any);
+   }, []);
+
+  React.useEffect(() => {
+     localStorage.setItem(LS_SAVED, JSON.stringify(savedPlaces));
+     // tell the app layer that saved places changed (used by sync)
+     try {
+       window.dispatchEvent(new CustomEvent("savedPlacesChanged", { detail: savedPlaces }));
+     } catch {}
+   }, [savedPlaces]);
+
 
   function onImportGeoJSON(files: FileList | null) {
     const f = files?.[0]; if (!f) return; const reader = new FileReader();
@@ -393,20 +411,21 @@ React.useEffect(() => {
     return;
      }
      const payload: Activity = {
-       id: editingId ?? uid(),
-       date: form.date!,
-       time: form.time?.trim() ? form.time : undefined,
-       durationMinutes:
-         form.durationMinutes && form.durationMinutes > 0
-           ? Number(form.durationMinutes)
-           : undefined,
-       title: form.title!.trim(),
-       city: form.city?.trim() || undefined,
-       location: form.location?.trim() || undefined,
-       comments: form.comments?.trim() || undefined,
-       link: form.link?.trim() || undefined,
-       type: (form.type as ActivityType) || "activity",
-     };
+     id: editingId ?? uid(),
+     date: form.date!,
+     time: form.time?.trim() ? form.time : undefined,
+     durationMinutes:
+       form.durationMinutes && form.durationMinutes > 0
+         ? Number(form.durationMinutes)
+         : undefined,
+     title: form.title!.trim(),
+     city: form.city?.trim() || undefined,
+     location: form.location?.trim() || undefined,
+     comments: form.comments?.trim() || undefined,
+     link: form.link?.trim() || undefined,
+     type: (form.type as ActivityType) || "activity",
+     updatedAt: Date.now(),
+   };
 
     if (editingId) {
     // Update existing, then go to list
@@ -603,6 +622,33 @@ function useFirebaseSync({
   const startedRef = React.useRef(false);
   const debRef = React.useRef<any>(null);
 
+  // device id (used to tag writes and avoid echo)
+  const getDeviceId = () => {
+    let id = localStorage.getItem(LS_DEVICE);
+    if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem(LS_DEVICE, id); }
+    return id;
+  };
+  const deviceIdRef = React.useRef<string>(getDeviceId());
+
+  // flags and refs to control loops
+  const firebaseRef = React.useRef<any>(null);
+  const docRefRef = React.useRef<any>(null);
+  const readyRef = React.useRef(false);
+  const applyingRemoteRef = React.useRef(false);
+  const lastSentHashRef = React.useRef<string>("");
+
+  const normalizeActs = (arr: any[]) =>
+    (Array.isArray(arr) ? arr.slice() : [])
+      .map(a => ({ ...a }))
+      .sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+
+  const stableHash = (payload: { activities: any[]; saved_places: any[] }) => {
+    return JSON.stringify({
+      activities: normalizeActs(payload.activities),
+      saved_places: payload.saved_places ?? [],
+    });
+  };
+
   React.useEffect(() => {
     if (!enabled) return;
     if (startedRef.current) return;
@@ -610,46 +656,112 @@ function useFirebaseSync({
     startedRef.current = true;
 
     let unsub: any = null;
-    let firebase: any = null;
 
     (async () => {
       try {
         const cfg = JSON.parse(configText);
-        firebase = await loadFirebaseCompat();
+        const firebase = await loadFirebaseCompat();
+        firebaseRef.current = firebase;
+
         if (firebase.apps?.length) firebase.app(); else firebase.initializeApp(cfg);
         const db = firebase.firestore();
         const auth = firebase.auth();
-        await auth.signInAnonymously().catch(() => {});
-        const ref = db.collection("itineraries").doc(String(shareCode));
 
-        const snap = await ref.get();
+        await auth.signInAnonymously().catch(() => {});
+
+        const docRef = db.collection("itineraries").doc(String(shareCode));
+        docRefRef.current = docRef;
+
+        // 1) Initial read and reconciliation
+        const localActs = getActivities() || [];
+        const localSaved = getSavedPlaces() || [];
+        const localHash = stableHash({ activities: localActs, saved_places: localSaved });
+
+        const snap = await docRef.get();
+        let remoteActs: any[] = [];
+        let remoteSaved: any[] = [];
         if (snap.exists) {
           const d = snap.data();
-          setFromRemote({ activities: d.activities || [], saved_places: d.saved_places || [] });
+          remoteActs = Array.isArray(d.activities) ? d.activities : [];
+          remoteSaved = Array.isArray(d.saved_places) ? d.saved_places : [];
         }
 
-        unsub = ref.onSnapshot((s: any) => {
+        const remoteHash = stableHash({ activities: remoteActs, saved_places: remoteSaved });
+
+        if (localHash !== remoteHash && (localActs.length > 0 || localSaved.length > 0)) {
+          // Local has something different/new: push local to server
+          await docRef.set({
+            activities: localActs,
+            saved_places: localSaved,
+            updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+            last_write_device: deviceIdRef.current,
+            version: 2
+          }, { merge: true });
+
+          lastSentHashRef.current = localHash;
+          // keep UI consistent with what we just wrote
+          applyingRemoteRef.current = true;
+          setFromRemote({ activities: localActs, saved_places: localSaved });
+          applyingRemoteRef.current = false;
+        } else {
+          // Use remote as source of truth
+          applyingRemoteRef.current = true;
+          setFromRemote({ activities: remoteActs, saved_places: remoteSaved });
+          applyingRemoteRef.current = false;
+          lastSentHashRef.current = remoteHash;
+        }
+
+        // 2) Live subscription (avoid echo by hashing)
+        unsub = docRef.onSnapshot((s: any) => {
           if (!s.exists) return;
-          const d = s.data();
-          setFromRemote({ activities: d.activities || [], saved_places: d.saved_places || [] });
+          const d = s.data() || {};
+          const acts = Array.isArray(d.activities) ? d.activities : [];
+          const saved = Array.isArray(d.saved_places) ? d.saved_places : [];
+
+          const incomingHash = stableHash({ activities: acts, saved_places: saved });
+          if (incomingHash === lastSentHashRef.current) return; // no-op
+
+          applyingRemoteRef.current = true;
+          setFromRemote({ activities: acts, saved_places: saved });
+          applyingRemoteRef.current = false;
+
+          lastSentHashRef.current = incomingHash;
         });
-      } catch (e) { console.error("[Sync] init failed", e); }
+
+        readyRef.current = true;
+      } catch (e) {
+        console.error("[Sync] init failed", e);
+      }
     })();
 
+    // 3) Local change handler with debounce and loop guard
     const onLocalChange = () => {
-      if (!enabled || !shareCode || !firebase) return;
+      const firebase = firebaseRef.current;
+      const docRef = docRefRef.current;
+      if (!enabled || !shareCode || !firebase || !docRef) return;
+      if (!readyRef.current) return;
+      if (applyingRemoteRef.current) return;
+
       clearTimeout(debRef.current);
       debRef.current = setTimeout(async () => {
         try {
-          const ref = firebase.firestore().collection("itineraries").doc(String(shareCode));
-          const payload = {
-            activities: getActivities() || [],
-            saved_places: getSavedPlaces() || [],
+          const acts = getActivities() || [];
+          const saved = getSavedPlaces() || [];
+          const nextHash = stableHash({ activities: acts, saved_places: saved });
+          if (nextHash === lastSentHashRef.current) return;
+
+          await docRef.set({
+            activities: acts,
+            saved_places: saved,
             updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-            version: 1
-          };
-          await ref.set(payload, { merge: true });
-        } catch (e) { console.error("[Sync] save failed", e); }
+            last_write_device: deviceIdRef.current,
+            version: 2
+          }, { merge: true });
+
+          lastSentHashRef.current = nextHash;
+        } catch (e) {
+          console.error("[Sync] save failed", e);
+        }
       }, 800);
     };
 
