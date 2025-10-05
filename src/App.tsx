@@ -373,6 +373,10 @@ export default function App() {
   suppressRef.current = false;
 }, [items]);
 
+   React.useEffect(() => {
+     if (!syncEnabled) return;
+     try { window.dispatchEvent(new Event("syncForcePush")); } catch {}
+   }, [items, syncEnabled]);
 
   React.useEffect(()=> {
     localStorage.setItem(LS_FB_CFG, fbConfigText||"");
@@ -636,6 +640,8 @@ function useFirebaseSync({
 
         window.addEventListener("localActivitiesChanged", onLocal);
         window.addEventListener("savedPlacesChanged", onLocal as any);
+         const force = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(push, 0); };
+         window.addEventListener("syncForcePush", force);
       } catch (e) {
         console.error("[Sync] init failed", e);
       }
@@ -646,6 +652,7 @@ function useFirebaseSync({
       clearTimeout(debounceTimer);
       try { window.removeEventListener("localActivitiesChanged", onLocal); } catch {}
       try { window.removeEventListener("savedPlacesChanged", onLocal as any); } catch {}
+      try { window.removeEventListener("syncForcePush", force); } catch {}
       try { if (unsub) unsub(); } catch {}
     };
   }, [enabled, configText, shareCode, getActivities, getSavedPlaces, setFromRemote]);
