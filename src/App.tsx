@@ -232,6 +232,7 @@ function Itinerary(
    ========== */
 function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
   const [savedPlaces, setSavedPlaces] = React.useState<any[]>(() => { try { return JSON.parse(localStorage.getItem(LS_SAVED)||"[]"); } catch { return []; } });
+  const savedRef = React.useRef<any[]>([]);
   const [showActs, setShowActs] = React.useState(true);
   const [showSaved, setShowSaved] = React.useState(true);
   const suppressRef = React.useRef(false);
@@ -337,6 +338,8 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
 export default function App() {
   const [tab, setTab] = React.useState<"add"|"list"|"cal"|"map">("add");
   const [items, setItems] = React.useState<Activity[]>(loadActivities());
+  const itemsRef = React.useRef<Activity[]>([]);
+  const suppressRef = React.useRef(false);
   const [apiKey, setApiKey] = React.useState(localStorage.getItem(LS_GMAPS) || "");
   const [showSettings, setShowSettings] = React.useState(false);
 
