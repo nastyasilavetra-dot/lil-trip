@@ -164,8 +164,8 @@ function CalendarView({ items }: { items: Activity[] }) {
    Itinerary UI
    ============= */
 function Itinerary(
-  { items, overlaps, onUpdate, onRemove }:
-  { items: Activity[]; overlaps: Set<string>; onUpdate: (id: string, p: Partial<Activity>) => void; onRemove: (id: string) => void }
+  { items, overlaps, onEdit, onRemove }:
+  { items: Activity[]; overlaps: Set<string>; onEdit: (a: Activity) => void; onRemove: (id: string) => void }
 ) {
   if (!items.length) return <div className="text-neutral-600">No activities yet. Add something on the first tab.</div>;
   const byDate = groupBy(items, x => x.date); const keys = Array.from(byDate.keys()).sort();
@@ -186,7 +186,7 @@ function Itinerary(
                   {a.comments && <div className="text-sm text-neutral-700 mt-1 whitespace-pre-wrap">{a.comments}</div>}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="grey" onClick={()=> onUpdate(a.id, { title: prompt("Title", a.title) || a.title })}>Edit</Button>
+                  <Button variant="grey" onClick={() => onEdit(a)}>Edit</Button>
                   <Button variant="grey" onClick={()=> onRemove(a.id)}>Delete</Button>
                 </div>
               </div>
@@ -301,6 +301,17 @@ export default function App() {
   const [apiKey, setApiKey] = React.useState(localStorage.getItem(LS_GMAPS) || "");
   const [showSettings, setShowSettings] = React.useState(false);
 
+// editing + success banner
+const [editingId, setEditingId] = React.useState<string | null>(null);
+const [flash, setFlash] = React.useState<{ kind: "add" | "update"; text: string } | null>(null);
+
+// auto-hide the banner
+React.useEffect(() => {
+  if (!flash) return;
+  const t = setTimeout(() => setFlash(null), 2200);
+  return () => clearTimeout(t);
+}, [flash]);
+
   // Firebase sync state
   const [fbConfigText, setFbConfigText] = React.useState(()=> localStorage.getItem(LS_FB_CFG) || "");
   const [fbShareCode, setFbShareCode]   = React.useState(()=> localStorage.getItem(LS_FB_SHARE) || "lil-trip");
@@ -347,23 +358,77 @@ export default function App() {
   const overlaps = React.useMemo(()=> computeOverlaps(sorted), [sorted]);
 
   const [form, setForm] = React.useState<Partial<Activity>>({ date: todayStr(), type: "activity" });
-  function addActivity() {
-    if (!form.date || !form.title) return alert("Date and Title are required");
-    const a: Activity = {
-      id: uid(),
-      date: form.date!, time: form.time?.trim()? form.time : undefined,
-      durationMinutes: form.durationMinutes && form.durationMinutes>0 ? Number(form.durationMinutes) : undefined,
-      title: form.title!.trim(),
-      city: form.city?.trim() || undefined,
-      location: form.location?.trim() || undefined,
-      comments: form.comments?.trim() || undefined,
-      link: form.link?.trim() || undefined,
-      type: (form.type as ActivityType) || "activity",
-    };
-    setItems(prev => [...prev, a]);
-  }
+ function saveActivity() {
+  if (!form.date || !form.title) {
+    alert("Date and Title are required");
+    return;
+     }
+     const payload: Activity = {
+       id: editingId ?? uid(),
+       date: form.date!,
+       time: form.time?.trim() ? form.time : undefined,
+       durationMinutes:
+         form.durationMinutes && form.durationMinutes > 0
+           ? Number(form.durationMinutes)
+           : undefined,
+       title: form.title!.trim(),
+       city: form.city?.trim() || undefined,
+       location: form.location?.trim() || undefined,
+       comments: form.comments?.trim() || undefined,
+       link: form.link?.trim() || undefined,
+       type: (form.type as ActivityType) || "activity",
+     };
+
+    if (editingId) {
+    // Update existing, then go to list
+    setItems(prev => prev.map(x => (x.id === editingId ? payload : x)));
+    setFlash({ kind: "update", text: "Activity updated" });
+    setEditingId(null);
+    setForm({ date: todayStr(), type: "activity" });
+    setTab("list");
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+     } else {
+    // Add new, stay on form, keep helpful fields for rapid entry
+    setItems(prev => [...prev, payload]);
+    setFlash({ kind: "add", text: "Activity added" });
+
+    // keep date/city/type; clear the rest
+    setForm(prev => ({
+      date: prev.date || todayStr(),
+      city: prev.city || "",
+      type: (prev.type as ActivityType) || "activity",
+      time: "",
+      durationMinutes: undefined,
+      title: "",
+      location: "",
+      comments: "",
+      link: ""
+       }));
+     }
+
+function cancelEditing() {
+  setEditingId(null);
+  setForm({ date: todayStr(), type: "activity" });
+}
+  
   function updateActivity(id: string, patch: Partial<Activity>) { setItems(prev => prev.map(x=> x.id===id? { ...x, ...patch } : x)); }
   function removeActivity(id: string) { setItems(prev => prev.filter(x=> x.id!==id)); }
+  function startEdit(a: Activity) {
+  setEditingId(a.id);
+  setForm({
+       date: a.date,
+       time: a.time,
+       durationMinutes: a.durationMinutes,
+       title: a.title,
+       city: a.city,
+       location: a.location,
+       comments: a.comments,
+       link: a.link,
+       type: a.type,
+     });
+     setTab("add");
+     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+   }
   function TabBtn({ id, label }:{ id:"add"|"list"|"cal"|"map"; label:string }) {
     const active = tab===id; const cls = active? "bg-black text-white" : "bg-white text-black";
     return <button onClick={()=>setTab(id)} className={`rounded-2xl px-4 py-2 border border-neutral-300 ${cls}`}>{label}</button>;
@@ -380,10 +445,29 @@ export default function App() {
           <TabBtn id="cal" label="Calendar view" />
           <TabBtn id="map" label="Map view" />
         </div>
+         {flash && (
+        <div
+          className={`mb-4 rounded-2xl border px-4 py-2 text-sm ${
+            flash.kind === "add"
+              ? "bg-green-50 border-green-200 text-green-800"
+              : "bg-blue-50 border-blue-200 text-blue-800"
+             }`}
+          role="status"
+          aria-live="polite"
+        >
+       {flash.text}
+        </div>
+      )}
+
 
         {tab==="add" && (
           <Card>
-            <div className="text-2xl font-semibold mb-4">Add new activity</div>
+            <div className="text-2xl font-semibold mb-1">
+              {editingId ? "Edit activity" : "Add new activity"}
+            </div>
+            <div className="text-sm text-neutral-500 mb-4">
+               {editingId ? "Update the fields and save your changes." : "Fill in the fields and click Add activity."}
+            </div>
             <div className="grid md:grid-cols-2 gap-4">
               <Input label="Date" type="date" value={form.date||""} onChange={(e:any)=>setForm(f=>({ ...f, date:e.target.value }))} />
               <Input label="Time" type="time" value={form.time||""} onChange={(e:any)=>setForm(f=>({ ...f, time:e.target.value }))} />
@@ -401,8 +485,21 @@ export default function App() {
               <Input label="Link (optional)" value={form.link||""} onChange={(e:any)=>setForm(f=>({ ...f, link:e.target.value }))} placeholder="https://…" />
             </div>
             <div className="flex gap-2 mt-4">
-              <Button onClick={addActivity}>Add activity</Button>
-              <Button variant="grey" onClick={()=>setForm({ date: todayStr(), type: "activity" })}>Clear</Button>
+              <Button onClick={saveActivity}>
+                {editingId ? "Save changes" : "Add activity"}
+              </Button>
+              <Button
+                variant="grey"
+                onClick={() => {
+                  if (editingId) {
+                   cancelEditing();
+                  } else {
+                    setForm({ date: todayStr(), type: "activity" });
+                  }
+                  }}
+              >
+             {editingId ? "Cancel editing" : "Clear"}
+              </Button>
             </div>
           </Card>
         )}
@@ -410,7 +507,12 @@ export default function App() {
         {tab==="list" && (
           <Card>
             <div className="text-2xl font-semibold mb-4">My Itinerary</div>
-            <Itinerary items={sorted} overlaps={overlaps} onUpdate={updateActivity} onRemove={removeActivity} />
+            <Itinerary
+              items={sorted}
+              overlaps={overlaps}
+              onEdit={startEdit}
+               onRemove={removeActivity}
+            />
           </Card>
         )}
 
