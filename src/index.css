@@ -90,3 +90,14 @@ input[type="time"]::-webkit-calendar-picker-indicator {
   opacity: .7;
 }
 
+/* iOS Safari: keep native date/time controls inside the box */
+input[type="date"],
+input[type="time"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  -webkit-appearance: none;
+  appearance: none;
+  overflow: hidden;
+}
