@@ -65,13 +65,21 @@ function normalizeMapsUrl(text: string) {
     if (!text || typeof text !== "string") return "";
     const raw = text.trim();
 
-    // Block only dangerous schemes, not random text
-    if (/^javascript:/i.test(raw)) return "";
+    // Hard stop if it looks like code or script-y junk
+    if (
+      /^javascript:/i.test(raw) ||
+      /\bwindow\.(?:add|remove)EventListener\b/i.test(raw) ||
+      /\bfunction\b|\bconst\b|\blet\b|\btry\s*\{|\bcatch\s*\(/i.test(raw) ||
+      /<\/?script/i.test(raw) ||
+      /[{}`]/.test(raw)
+    ) {
+      return "";
+    }
 
     // Accept full links as-is
     if (/^https?:\/\//i.test(raw)) return raw;
 
-    // Fallback: construct a safe Google Maps search URL
+    // Otherwise treat it as a search query
     return `https://www.google.com/maps/search/${encodeURIComponent(raw)}`;
   } catch {
     return "";
