@@ -430,7 +430,15 @@ function cancelEditing() {
    }
   function TabBtn({ id, label }:{ id:"add"|"list"|"cal"|"map"; label:string }) {
     const active = tab===id; const cls = active? "bg-black text-white" : "bg-white text-black";
-    return <button onClick={()=>setTab(id)} className={`rounded-2xl px-4 py-2 border border-neutral-300 ${cls}`}>{label}</button>;
+    return (
+     <button
+       onClick={() => setTab(id)}
+       className={`rounded-2xl px-4 py-2 border border-neutral-300 ${cls}`}
+       style={{ flexShrink: 0 }}
+     >
+    {label}
+     </button>
+   );
   }
 
   return (
@@ -438,7 +446,11 @@ function cancelEditing() {
       <Header onOpenSettings={()=>setShowSettings(true)} />
 
       <main className="max-w-6xl mx-auto px-4 pt-20 pb-24">
-        <div className="flex gap-3 mb-6">
+        <div
+        className="flex gap-3 mb-6 overflow-x-auto -mx-4 px-4"
+        style={{ WebkitOverflowScrolling: "touch" }}
+         >
+
           <TabBtn id="add" label="Add activity" />
           <TabBtn id="list" label="My Itinerary" />
           <TabBtn id="cal" label="Calendar view" />
