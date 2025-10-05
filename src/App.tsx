@@ -61,8 +61,20 @@ function computeOverlaps(items: Activity[]) {
   return set;
 }
 function normalizeMapsUrl(text: string) {
-  try { if (/^https?:\/\//i.test(text)) return text.trim(); return `https://www.google.com/maps/search/${encodeURIComponent(text)}`; } catch { return text; }
+  try {
+    if (!text || typeof text !== "string") return "";
+    const raw = text.trim();
+
+    // Hard guard against accidental code getting into the field
+    if (/[{}]|window\.removeEventListener|addEventListener|<\/?script/i.test(raw)) return "";
+
+    if (/^https?:\/\//i.test(raw)) return raw;
+    return `https://www.google.com/maps/search/${encodeURIComponent(raw)}`;
+  } catch {
+    return "";
+  }
 }
+
 // Prefer last !3d!4d, then q=/query=/ll=, then @lat,lng
 function parseCoordsFromUrl(url: string) {
   try {
@@ -372,6 +384,10 @@ export default function App() {
   // if the change came from Firestore, we ignore announcing it
   suppressRef.current = false;
 }, [items]);
+   React.useEffect(() => {
+     if (!syncEnabled) return;
+     try { window.dispatchEvent(new Event("syncForcePush")); } catch {}
+   }, [items, syncEnabled]);
 
    React.useEffect(() => {
      if (!syncEnabled) return;
@@ -427,7 +443,7 @@ export default function App() {
   // Apply server state without announcing a local change
      suppressRef.current = true;
      if (nextActs)  setItems(nextActs);
-     if (nextSaved) applySavedPlacesFromRemote(nextSaved);
+     if (nextSaved) window.dispatchEvent(new CustomEvent("savedPlacesSyncSet", { detail: nextSaved }));
    }
   });
 
@@ -620,7 +636,7 @@ function useFirebaseSync({
         await fb.auth().signInAnonymously();
 
         const db = fb.firestore();
-        ref = db.collection("itineraries").doc(String(shareCode));
+        ref = db.collection("itineraries").doc(String(shareCode).trim());
 
         // Ensure doc exists with current local state
         await push();
