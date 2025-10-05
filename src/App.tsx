@@ -622,6 +622,7 @@ function useFirebaseSync({
           },
           { merge: true }
         );
+        // console.log("[Sync] pushed");
       } catch (e) {
         console.error("[Sync] push failed", e);
       }
@@ -675,86 +676,6 @@ function useFirebaseSync({
         window.removeEventListener("savedPlacesChanged", onLocal);
       } catch {}
       try { if (unsub) unsub(); } catch {}
-    };
-  }, [enabled, configText, shareCode, getActivities, getSavedPlaces, setFromRemote]);
-}
- {
-  const startedRef = React.useRef(false);
-  const debRef = React.useRef<any>(null);
-
-  React.useEffect(() => {
-    if (!enabled) return;
-    if (startedRef.current) return;
-    if (!configText || !shareCode) return;
-    startedRef.current = true;
-
-    let unsub: any = null;
-    let firebase: any = null;
-
-    (async () => {
-      try {
-        const cfg = JSON.parse(configText);
-        firebase = await loadFirebaseCompat();
-        if (firebase.apps?.length) firebase.app(); else firebase.initializeApp(cfg);
-        const db = firebase.firestore();
-        const auth = firebase.auth();
-        await auth.signInAnonymously().catch(() => {});
-        const ref = db.collection("itineraries").doc(String(shareCode));
-
-        const snap = await ref.get();
-        if (snap.exists) {
-          const d = snap.data();
-          setFromRemote({ activities: d.activities || [], saved_places: d.saved_places || [] });
-        }
-
-        unsub = ref.onSnapshot((s: any) => {
-          if (!s.exists) return;
-          const d = s.data();
-          setFromRemote({ activities: d.activities || [], saved_places: d.saved_places || [] });
-        });
-         // Ensure a document exists by pushing current local state once
-         try {
-           await ref.set(
-             {
-            activities: getActivities() || [],
-            saved_places: getSavedPlaces() || [],
-            updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-            version: 1,
-             },
-          { merge: true }
-           );
-         } catch (e) {
-         console.error("[Sync] initial push failed", e);
-         }
-
-      } catch (e) { console.error("[Sync] init failed", e); }
-    })();
-
-    const onLocalChange = () => {
-      if (!enabled || !shareCode || !firebase) return;
-      clearTimeout(debRef.current);
-      debRef.current = setTimeout(async () => {
-        try {
-          const ref = firebase.firestore().collection("itineraries").doc(String(shareCode));
-          const payload = {
-            activities: getActivities() || [],
-            saved_places: getSavedPlaces() || [],
-            updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-            version: 1
-          };
-          await ref.set(payload, { merge: true });
-        } catch (e) { console.error("[Sync] save failed", e); }
-      }, 800);
-    };
-
-    const poke = () => onLocalChange();
-    window.addEventListener("localActivitiesChanged", poke);
-    window.addEventListener("savedPlacesChanged", poke);
-
-    return () => {
-      window.removeEventListener("localActivitiesChanged", poke);
-      window.removeEventListener("savedPlacesChanged", poke);
-      if (unsub) unsub();
     };
   }, [enabled, configText, shareCode, getActivities, getSavedPlaces, setFromRemote]);
 }
