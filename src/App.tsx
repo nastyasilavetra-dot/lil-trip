@@ -299,23 +299,20 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
   const [showActs, setShowActs] = React.useState(true);
   const [showSaved, setShowSaved] = React.useState(true);
 
-   React.useEffect(() => {
-     const apply = (e: any) => {
-       const arr = Array.isArray(e.detail) ? e.detail : [];
-       setSavedPlaces(arr);
-     };
-     window.addEventListener("savedPlacesSyncSet", apply as any);
-     return () => window.removeEventListener("savedPlacesSyncSet", apply as any);
-   }, []);
+  React.useEffect(() => {
+    const apply = (e: any) => {
+      const arr = Array.isArray(e.detail) ? e.detail : [];
+      setSavedPlaces(arr);
+    };
+    window.addEventListener("savedPlacesSyncSet", apply as any);
+    return () => window.removeEventListener("savedPlacesSyncSet", apply as any);
+  }, []);
 
- React.useEffect(() => {
-  const canon = canonSavedPlaces(savedPlaces || []);
-  localStorage.setItem(LS_SAVED, JSON.stringify(canon));
-  try {
-    window.dispatchEvent(new CustomEvent("savedPlacesChanged", { detail: canon }));
-  } catch {}
-}, [savedPlaces]);
-
+  // Persist locally only; do not emit sync events here
+  React.useEffect(() => {
+    const canon = canonSavedPlaces(savedPlaces || []);
+    localStorage.setItem(LS_SAVED, JSON.stringify(canon));
+  }, [savedPlaces]);
 
   function onImportGeoJSON(files: FileList | null) {
     const f = files?.[0]; if (!f) return; const reader = new FileReader();
@@ -327,6 +324,10 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
           .filter((ft:any)=> ft?.geometry?.type==='Point' && Array.isArray(ft.geometry.coordinates) && ft.geometry.coordinates.length>=2)
           .map((ft:any)=> ({ type:'Feature', geometry:{ type:'Point', coordinates:[Number(ft.geometry.coordinates[0]), Number(ft.geometry.coordinates[1])] }, properties: ft.properties||{} }));
         setSavedPlaces(normalized);
+        try {
+          const canon = canonSavedPlaces(normalized);
+          window.dispatchEvent(new CustomEvent("savedPlacesChanged", { detail: canon }));
+        } catch {}
       } catch { alert("Invalid GeoJSON"); }
     };
     reader.readAsText(f);
@@ -351,13 +352,13 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
     return Array.from(map.values());
   }, [activityPins, savedPins, showActs, showSaved]);
    
-   const pinsKey = React.useMemo(
-     () => mergedPins
-        .map(p => `${p.kind}|${p.title||""}|${p.coord.lat.toFixed(6)},${p.coord.lng.toFixed(6)}`)
-        .sort()
-        .join("|"),
-     [mergedPins]
-   );
+  const pinsKey = React.useMemo(
+    () => mergedPins
+       .map(p => `${p.kind}|${p.title||""}|${p.coord.lat.toFixed(6)},${p.coord.lng.toFixed(6)}`)
+       .sort()
+       .join("|"),
+    [mergedPins]
+  );
 
   React.useEffect(()=> {
     if (!apiKey) return;
@@ -405,7 +406,10 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
       </div>
       <div className="flex items-center gap-3 mb-4">
         <input type="file" accept="application/json,.geojson,.json" onChange={(e)=> onImportGeoJSON(e.target.files)} />
-        <Button variant="grey" onClick={()=> setSavedPlaces([])}>Clear</Button>
+        <Button variant="grey" onClick={()=> {
+          setSavedPlaces([]);
+          try { window.dispatchEvent(new CustomEvent("savedPlacesChanged", { detail: [] })); } catch {}
+        }}>Clear</Button>
       </div>
 
       <div className="w-full overflow-hidden rounded-2xl border border-neutral-200">
@@ -425,16 +429,16 @@ export default function App() {
   const [apiKey, setApiKey] = React.useState(localStorage.getItem(LS_GMAPS) || "");
   const [showSettings, setShowSettings] = React.useState(false);
 
-// editing + success banner
-const [editingId, setEditingId] = React.useState<string | null>(null);
-const [flash, setFlash] = React.useState<{ kind: "add" | "update"; text: string } | null>(null);
+  // editing + success banner
+  const [editingId, setEditingId] = React.useState<string | null>(null);
+  const [flash, setFlash] = React.useState<{ kind: "add" | "update"; text: string } | null>(null);
 
-// auto-hide the banner
-React.useEffect(() => {
-  if (!flash) return;
-  const t = setTimeout(() => setFlash(null), 2200);
-  return () => clearTimeout(t);
-}, [flash]);
+  // auto-hide the banner
+  React.useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 2200);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   // Firebase sync state
   const [fbConfigText, setFbConfigText] = React.useState(()=> localStorage.getItem(LS_FB_CFG) || "");
@@ -444,19 +448,15 @@ React.useEffect(() => {
   React.useEffect(()=> saveActivities(items), [items]);
   React.useEffect(()=> saveApiKey(apiKey), [apiKey]);
 
-  // Keep refs for sync
+  // Keep refs for sync (do NOT auto-emit events here)
   const itemsRef = React.useRef(items);
-  React.useEffect(()=> { itemsRef.current = items; window.dispatchEvent(new Event("localActivitiesChanged")); }, [items]);
+  React.useEffect(()=> { itemsRef.current = items; }, [items]);
 
   React.useEffect(()=> {
-  localStorage.setItem(LS_FB_CFG, fbConfigText||"");
-  localStorage.setItem(LS_FB_SHARE, fbShareCode||"");
-  localStorage.setItem(LS_FB_SYNC, String(syncEnabled));
-  // when enabling, immediately “poke” sync to attempt a write
-  if (syncEnabled) {
-    try { window.dispatchEvent(new Event("localActivitiesChanged")); } catch {}
-  }
-}, [fbConfigText, fbShareCode, syncEnabled]);
+    localStorage.setItem(LS_FB_CFG, fbConfigText||"");
+    localStorage.setItem(LS_FB_SHARE, fbShareCode||"");
+    localStorage.setItem(LS_FB_SYNC, String(syncEnabled));
+  }, [fbConfigText, fbShareCode, syncEnabled]);
 
   // Saved places bridge for sync
   const savedRef = React.useRef<any[]>([]);
@@ -469,7 +469,7 @@ React.useEffect(() => {
     window.dispatchEvent(new CustomEvent("savedPlacesSyncSet", { detail: Array.isArray(arr)? arr : [] }));
   }
 
-  // Start Firebase sync
+  // Start Firebase sync (explicit model)
   useFirebaseSync({
     enabled: syncEnabled,
     configText: fbConfigText,
@@ -486,91 +486,96 @@ React.useEffect(() => {
   const overlaps = React.useMemo(()=> computeOverlaps(sorted), [sorted]);
 
   const [form, setForm] = React.useState<Partial<Activity>>({ date: todayStr(), type: "activity" });
- function saveActivity() {
-  if (!form.date || !form.title) {
-    alert("Date and Title are required");
-    return;
-     }
-     const payload: Activity = {
-     id: editingId ?? uid(),
-     date: form.date!,
-     time: form.time?.trim() ? form.time : undefined,
-     durationMinutes:
-       form.durationMinutes && form.durationMinutes > 0
-         ? Number(form.durationMinutes)
-         : undefined,
-     title: form.title!.trim(),
-     city: form.city?.trim() || undefined,
-     location: form.location?.trim() || undefined,
-     comments: form.comments?.trim() || undefined,
-     link: form.link?.trim() || undefined,
-     type: (form.type as ActivityType) || "activity",
-     updatedAt: Date.now(),
-   };
+  function saveActivity() {
+    if (!form.date || !form.title) {
+      alert("Date and Title are required");
+      return;
+    }
+    const payload: Activity = {
+      id: editingId ?? uid(),
+      date: form.date!,
+      time: form.time?.trim() ? form.time : undefined,
+      durationMinutes:
+        form.durationMinutes && form.durationMinutes > 0
+          ? Number(form.durationMinutes)
+          : undefined,
+      title: form.title!.trim(),
+      city: form.city?.trim() || undefined,
+      location: form.location?.trim() || undefined,
+      comments: form.comments?.trim() || undefined,
+      link: form.link?.trim() || undefined,
+      type: (form.type as ActivityType) || "activity",
+      updatedAt: Date.now(),
+    };
 
     if (editingId) {
-    // Update existing, then go to list
-    setItems(prev => prev.map(x => (x.id === editingId ? payload : x)));
-    setFlash({ kind: "update", text: "Activity updated" });
+      // Update existing, then go to list
+      setItems(prev => prev.map(x => (x.id === editingId ? payload : x)));
+      setFlash({ kind: "update", text: "Activity updated" });
+      try { window.dispatchEvent(new Event("localActivitiesChanged")); } catch {}
+      setEditingId(null);
+      setForm({ date: todayStr(), type: "activity" });
+      setTab("list");
+      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+    } else {
+      // Add new, stay on form, keep helpful fields for rapid entry
+      setItems(prev => [...prev, payload]);
+      setFlash({ kind: "add", text: "Activity added" });
+      try { window.dispatchEvent(new Event("localActivitiesChanged")); } catch {}
+
+      // keep date/city/type; clear the rest
+      setForm(prev => ({
+        date: prev.date || todayStr(),
+        city: prev.city || "",
+        type: (prev.type as ActivityType) || "activity",
+        time: "",
+        durationMinutes: undefined,
+        title: "",
+        location: "",
+        comments: "",
+        link: ""
+      }));
+    }
+  }
+  function cancelEditing() {
     setEditingId(null);
     setForm({ date: todayStr(), type: "activity" });
-    setTab("list");
-    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-     } else {
-    // Add new, stay on form, keep helpful fields for rapid entry
-    setItems(prev => [...prev, payload]);
-    setFlash({ kind: "add", text: "Activity added" });
-
-    // keep date/city/type; clear the rest
-    setForm(prev => ({
-      date: prev.date || todayStr(),
-      city: prev.city || "",
-      type: (prev.type as ActivityType) || "activity",
-      time: "",
-      durationMinutes: undefined,
-      title: "",
-      location: "",
-      comments: "",
-      link: ""
-       }));
-     }
-   }
-function cancelEditing() {
-  setEditingId(null);
-  setForm({ date: todayStr(), type: "activity" });
-}
+  }
   
-  function removeActivity(id: string) { setItems(prev => prev.filter(x=> x.id!==id)); }
+  function removeActivity(id: string) {
+    setItems(prev => prev.filter(x=> x.id!==id));
+    try { window.dispatchEvent(new Event("localActivitiesChanged")); } catch {}
+  }
   function startEdit(a: Activity) {
-  setEditingId(a.id);
-  setForm({
-       date: a.date,
-       time: a.time,
-       durationMinutes: a.durationMinutes,
-       title: a.title,
-       city: a.city,
-       location: a.location,
-       comments: a.comments,
-       link: a.link,
-       type: a.type,
-     });
-     setTab("add");
-     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-   }
- function TabBtn({ id, label }:{ id:"add"|"list"|"cal"|"map"; label:string }) {
-  const active = tab===id; const cls = active? "bg-black text-white" : "bg-white text-black";
-  return (
-    <button
-      type="button"
-      onClick={() => setTab(id)}
-      className={`rounded-2xl px-4 py-2 border border-neutral-300 ${cls}`}
-      style={{ flexShrink: 0 }}
-      aria-pressed={active}
-    >
-      {label}
-    </button>
-  );
-}
+    setEditingId(a.id);
+    setForm({
+      date: a.date,
+      time: a.time,
+      durationMinutes: a.durationMinutes,
+      title: a.title,
+      city: a.city,
+      location: a.location,
+      comments: a.comments,
+      link: a.link,
+      type: a.type,
+    });
+    setTab("add");
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+  }
+  function TabBtn({ id, label }:{ id:"add"|"list"|"cal"|"map"; label:string }) {
+    const active = tab===id; const cls = active? "bg-black text-white" : "bg-white text-black";
+    return (
+      <button
+        type="button"
+        onClick={() => setTab(id)}
+        className={`rounded-2xl px-4 py-2 border border-neutral-300 ${cls}`}
+        style={{ flexShrink: 0 }}
+        aria-pressed={active}
+      >
+        {label}
+      </button>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-neutral-100 text-black overflow-x-hidden">
@@ -578,11 +583,8 @@ function cancelEditing() {
 
       <main className="isolate max-w-6xl mx-auto px-4 pt-20 pb-24">
         <div
-        className="sticky top-16 z-[70] flex gap-3 mb-6 overflow-x-auto px-2 bg-neutral-100"
-         >
-
-
-
+          className="sticky top-16 z-[70] flex gap-3 mb-6 overflow-x-auto px-2 bg-neutral-100"
+        >
           <TabBtn id="add" label="Add activity" />
           <TabBtn id="list" label="My Itinerary" />
           <TabBtn id="cal" label="Calendar view" />
@@ -704,57 +706,53 @@ function useFirebaseSync({
   getActivities: () => any[]; getSavedPlaces: () => any[]; setFromRemote: (d: any) => void;
 }) {
   const debRef = React.useRef<any>(null);
-   const getDeviceId = () => {
-     let id = localStorage.getItem(LS_DEVICE);
-     if (!id) { id = Math.random().toString(36).slice(2,10); localStorage.setItem(LS_DEVICE, id); }
-     return id;
-   };
-   const deviceIdRef = React.useRef<string>(getDeviceId());
-
-
   const firebaseRef = React.useRef<any>(null);
   const docRefRef   = React.useRef<any>(null);
   const readyRef    = React.useRef(false);
-  const applyingRemoteRef = React.useRef(false);
-  const lastSentHashRef   = React.useRef<string>("");
+  const lastSentHashRef = React.useRef<string>("");
 
-  const stableHash = (payload: { activities: any[]; saved_places: any[] }) =>
-  stableHashData(payload.activities, payload.saved_places);
+  const getDeviceId = () => {
+    let id = localStorage.getItem(LS_DEVICE);
+    if (!id) { id = Math.random().toString(36).slice(2,10); localStorage.setItem(LS_DEVICE, id); }
+    return id;
+  };
+  const deviceIdRef = React.useRef<string>(getDeviceId());
 
-  // debounced writer
-  const queueWrite = () => {
+  // single writer used by both activity and saved-places events
+  const writeOnce = (delayMs = 300) => {
     const firebase = firebaseRef.current;
     const docRef   = docRefRef.current;
-    if (!enabled || !firebase || !docRef || !readyRef.current || applyingRemoteRef.current) return;
+    if (!enabled || !firebase || !docRef || !readyRef.current) return;
 
     clearTimeout(debRef.current);
     debRef.current = setTimeout(async () => {
+      const acts  = getActivities()  || [];
+      const saved = getSavedPlaces() || [];
+      const nextHash = stableHashData(acts, saved);
+      if (nextHash === lastSentHashRef.current) return;
+
       try {
-        const acts  = getActivities()   || [];
-        const saved = getSavedPlaces()  || [];
-        const nextHash = stableHash({ activities: acts, saved_places: saved });
-        if (nextHash === lastSentHashRef.current) return;
-
         await docRef.set({
-           activities: canonActivities(acts || []),
-           saved_places: canonSavedPlaces(saved || []),
-           updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-           last_write_device: deviceIdRef.current,
-           version: 3
-         }, { merge: true });
-
+          activities: canonActivities(acts),
+          saved_places: canonSavedPlaces(saved),
+          updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+          last_write_device: deviceIdRef.current,
+          version: 4
+        }, { merge: true });
         lastSentHashRef.current = nextHash;
       } catch (e) {
         console.error("[Sync] write failed:", e);
       }
-    }, 500);
+    }, delayMs);
   };
 
   React.useEffect(() => {
-    // clean re-init whenever any dependency really changes
-    let unsub: any = null;
+    // clean re-init whenever settings change
     readyRef.current = false;
     lastSentHashRef.current = "";
+
+    let offA: any = null;
+    let offS: any = null;
 
     if (!enabled) return;
     if (!configText || !shareCode) return;
@@ -766,26 +764,21 @@ function useFirebaseSync({
         firebaseRef.current = firebase;
 
         if (firebase.apps?.length) firebase.app(); else firebase.initializeApp(cfg);
-
         const db   = firebase.firestore();
         const auth = firebase.auth();
 
-        // Wait until we actually have a user before touching Firestore
         await auth.signInAnonymously();
-        await new Promise<void>((resolve, reject) => {
-          const off = auth.onAuthStateChanged((u: any) => {
-            off();
-            if (u) resolve(); else reject(new Error("Anon auth failed"));
-          });
+        await new Promise<void>((resolve) => {
+          const off = auth.onAuthStateChanged((_u: any) => { off(); resolve(); });
         });
 
         const docRef = db.collection("itineraries").doc(String(shareCode));
         docRefRef.current = docRef;
 
-        // 1) Initial reconciliation
+        // Initial load: read remote once
         const localActs  = getActivities()  || [];
         const localSaved = getSavedPlaces() || [];
-        const localHash  = stableHash({ activities: localActs, saved_places: localSaved });
+        const localHash  = stableHashData(localActs, localSaved);
 
         const snap = await docRef.get();
         let remoteActs: any[] = [];
@@ -795,62 +788,50 @@ function useFirebaseSync({
           remoteActs  = Array.isArray(d.activities) ? d.activities : [];
           remoteSaved = Array.isArray(d.saved_places) ? d.saved_places : [];
         }
-        const remoteHash = stableHash({ activities: remoteActs, saved_places: remoteSaved });
+        const remoteHash = stableHashData(remoteActs, remoteSaved);
+        const hasRemote  = remoteActs.length > 0 || remoteSaved.length > 0;
+        const hasLocal   = localActs.length > 0 || localSaved.length > 0;
 
-        if (localHash !== remoteHash && (localActs.length > 0 || localSaved.length > 0)) {
-          // Push LOCAL up (so your fresh work wins on refresh)
-         await docRef.set({
-           activities: canonActivities(getActivities() || localActs || []),
-           saved_places: canonSavedPlaces(getSavedPlaces() || localSaved || []),
-           updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-           last_write_device: deviceIdRef.current,
-           version: 3
-         }, { merge: true });
-
-          lastSentHashRef.current = localHash;
-          applyingRemoteRef.current = true;
-          setFromRemote({ activities: localActs, saved_places: localSaved });
-          applyingRemoteRef.current = false;
-        } else {
-          // Use remote as source
-          applyingRemoteRef.current = true;
+        if (hasRemote) {
+          // Use remote as the initial source once
           setFromRemote({ activities: remoteActs, saved_places: remoteSaved });
-          applyingRemoteRef.current = false;
           lastSentHashRef.current = remoteHash;
+        } else if (hasLocal) {
+          // No remote yet, seed it with local once
+          try {
+            await docRef.set({
+              activities: canonActivities(localActs),
+              saved_places: canonSavedPlaces(localSaved),
+              updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+              last_write_device: deviceIdRef.current,
+              version: 4
+            }, { merge: true });
+            lastSentHashRef.current = localHash;
+          } catch (e) {
+            console.error("[Sync] seed write failed:", e);
+          }
+        } else {
+          // both empty: nothing to do
+          lastSentHashRef.current = remoteHash; // which is "empty"
         }
-
-        // 2) Live subscribe
-        unsub = docRef.onSnapshot((s:any) => {
-          if (!s.exists) return;
-          const d = s.data() || {};
-          const acts  = Array.isArray(d.activities) ? d.activities : [];
-          const saved = Array.isArray(d.saved_places) ? d.saved_places : [];
-          const incomingHash = stableHashData(acts, saved);
-          if (incomingHash === lastSentHashRef.current) return;
-
-          applyingRemoteRef.current = true;
-          setFromRemote({ activities: acts, saved_places: saved });
-          applyingRemoteRef.current = false;
-          lastSentHashRef.current = incomingHash;
-        });
 
         readyRef.current = true;
 
-        // 3) After init, force one write if local changed during init or is non-empty and differs
-        queueWrite();
+        // Listen for explicit user-change events only
+        const onActs = () => writeOnce(250);
+        const onSaved = () => writeOnce(250);
+        window.addEventListener("localActivitiesChanged", onActs);
+        window.addEventListener("savedPlacesChanged", onSaved);
+        offA = () => window.removeEventListener("localActivitiesChanged", onActs);
+        offS = () => window.removeEventListener("savedPlacesChanged", onSaved);
       } catch (e) {
         console.error("[Sync] init failed:", e);
       }
     })();
 
-    const poke = () => queueWrite();
-    window.addEventListener("localActivitiesChanged", poke);
-    window.addEventListener("savedPlacesChanged",  poke);
-
     return () => {
-      window.removeEventListener("localActivitiesChanged", poke);
-      window.removeEventListener("savedPlacesChanged",  poke);
-      if (unsub) unsub();
+      if (offA) offA();
+      if (offS) offS();
     };
   }, [enabled, configText, shareCode, getActivities, getSavedPlaces, setFromRemote]);
 }
@@ -874,4 +855,3 @@ function loadFirebaseCompat(): Promise<any> {
     })();
   });
 }
-
