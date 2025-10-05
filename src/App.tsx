@@ -341,7 +341,8 @@ export default function App() {
 
   // refs (single source of truth)
   const itemsRef = React.useRef<Activity[]>(items);
-  const savedRef  = React.useRef<any[]>(() => { try { return JSON.parse(localStorage.getItem(LS_SAVED)||"[]"); } catch { return []; } }) as React.MutableRefObject<any[]>;
+React.useEffect(() => { itemsRef.current = items; }, [items]);
+  const savedRef = React.useRef<any[]>([]); } catch { return []; } }) as React.MutableRefObject<any[]>;
   const suppressRef = React.useRef(false);
 
   // editing + success banner
