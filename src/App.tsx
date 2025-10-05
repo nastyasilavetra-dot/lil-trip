@@ -234,8 +234,18 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
   const [savedPlaces, setSavedPlaces] = React.useState<any[]>(() => { try { return JSON.parse(localStorage.getItem(LS_SAVED)||"[]"); } catch { return []; } });
   const [showActs, setShowActs] = React.useState(true);
   const [showSaved, setShowSaved] = React.useState(true);
+  const suppressRef = React.useRef(false);
 
-  React.useEffect(()=>{ localStorage.setItem(LS_SAVED, JSON.stringify(savedPlaces)); }, [savedPlaces]);
+  // Only announce local edits; remote pulls set suppressRef.current = true
+   React.useEffect(() => {
+     itemsRef.current = items;
+     if (!suppressRef.current) {
+       window.dispatchEvent(new Event("localActivitiesChanged"));
+     }
+  // reset the flag after we’ve ignored one remote change
+     suppressRef.current = false;
+   }, [items]);
+
 
   function onImportGeoJSON(files: FileList | null) {
     const f = files?.[0]; if (!f) return; const reader = new FileReader();
@@ -371,17 +381,26 @@ React.useEffect(() => {
   }
 
   // Start Firebase sync
-  useFirebaseSync({
-    enabled: syncEnabled,
-    configText: fbConfigText,
-    shareCode: fbShareCode,
-    getActivities: () => itemsRef.current,
-    getSavedPlaces: () => savedRef.current,
-    setFromRemote: (data:any) => {
-      if (data?.activities) setItems(data.activities);
-      if (data?.saved_places) applySavedPlacesFromRemote(data.saved_places);
-    }
-  });
+useFirebaseSync({
+  enabled: syncEnabled,
+  configText: fbConfigText,
+  shareCode: fbShareCode,
+  getActivities: () => itemsRef.current,
+  getSavedPlaces: () => savedRef.current,
+  setFromRemote: (data: any) => {
+    const nextActs  = Array.isArray(data?.activities)   ? data.activities   : undefined;
+    const nextSaved = Array.isArray(data?.saved_places) ? data.saved_places : undefined;
+
+    // Skip if identical to what we already have
+    const sameActs  = nextActs  ? JSON.stringify(nextActs)  === JSON.stringify(itemsRef.current)  : true;
+    const sameSaved = nextSaved ? JSON.stringify(nextSaved) === JSON.stringify(savedRef.current) : true;
+    if (sameActs && sameSaved) return;
+
+    suppressRef.current = true; // tell the items effect “this came from server”
+    if (nextActs)  setItems(nextActs);
+    if (nextSaved) applySavedPlacesFromRemote(nextSaved);
+  }
+});
 
   const sorted   = React.useMemo(()=> [...items].sort(compareDateTime), [items]);
   const overlaps = React.useMemo(()=> computeOverlaps(sorted), [sorted]);
@@ -652,13 +671,19 @@ function useFirebaseSync({
 
         // 2) Live updates from server
         unsub = ref.onSnapshot((s: any) => {
-          if (!s.exists) return;
-          const d = s.data();
-          setFromRemote({
-            activities: d?.activities || [],
-            saved_places: d?.saved_places || [],
-          });
-        });
+        if (!s.exists) return;
+        const d = s.data() || {};
+        const acts  = Array.isArray(d.activities)   ? d.activities   : [];
+        const saved = Array.isArray(d.saved_places) ? d.saved_places : [];
+
+        // Avoid churn if nothing changed
+        const same =
+          JSON.stringify(acts)  === JSON.stringify(getActivities() || []) &&
+          JSON.stringify(saved) === JSON.stringify(getSavedPlaces() || []);
+        if (same) return;
+
+        setFromRemote({ activities: acts, saved_places: saved });
+         });
 
         // 3) Listen for local changes (add/edit/delete, saved places)
         window.addEventListener("localActivitiesChanged", onLocal);
