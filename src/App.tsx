@@ -341,9 +341,9 @@ export default function App() {
 
   // refs (single source of truth)
   const itemsRef = React.useRef<Activity[]>(items);
-React.useEffect(() => { itemsRef.current = items; }, [items]);
-  const savedRef = React.useRef<any[]>([]); } catch { return []; } }) as React.MutableRefObject<any[]>;
-  const suppressRef = React.useRef(false);
+   React.useEffect(() => { itemsRef.current = items; }, [items]);
+   const savedRef  = React.useRef<any[]>([]);
+   const suppressRef = React.useRef(false);
 
   // editing + success banner
   const [editingId, setEditingId] = React.useState<string | null>(null);
