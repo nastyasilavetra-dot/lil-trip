@@ -610,6 +610,7 @@ function useFirebaseSync({
     };
 
     const onLocal = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(push, 600); };
+    const force = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(push, 0); };
 
     (async () => {
       try {
