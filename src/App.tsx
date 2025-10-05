@@ -600,6 +600,85 @@ function useFirebaseSync({
   enabled: boolean; configText: string; shareCode: string;
   getActivities: () => any[]; getSavedPlaces: () => any[]; setFromRemote: (d: any) => void;
 }) {
+  React.useEffect(() => {
+    if (!enabled) return;
+    if (!configText || !shareCode) return;
+
+    let fb: any = null;
+    let ref: any = null;
+    let unsub: any = null;
+    let cancelled = false;
+    let debounceTimer: any = null;
+
+    const push = async () => {
+      try {
+        if (!ref || !fb) return;
+        await ref.set(
+          {
+            activities: getActivities() || [],
+            saved_places: getSavedPlaces() || [],
+            updated_at: fb.firestore.FieldValue.serverTimestamp(),
+            version: 1,
+          },
+          { merge: true }
+        );
+      } catch (e) {
+        console.error("[Sync] push failed", e);
+      }
+    };
+
+    const onLocal = () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(push, 600);
+    };
+
+    (async () => {
+      try {
+        const cfg = JSON.parse(configText);
+        fb = await loadFirebaseCompat();
+        if (fb.apps?.length) fb.app();
+        else fb.initializeApp(cfg);
+
+        await fb.auth().signInAnonymously();
+
+        const db = fb.firestore();
+        ref = db.collection("itineraries").doc(String(shareCode));
+
+        // 1) Ensure the document exists immediately
+        await push();
+
+        if (cancelled) return;
+
+        // 2) Live updates from server
+        unsub = ref.onSnapshot((s: any) => {
+          if (!s.exists) return;
+          const d = s.data();
+          setFromRemote({
+            activities: d?.activities || [],
+            saved_places: d?.saved_places || [],
+          });
+        });
+
+        // 3) Listen for local changes (add/edit/delete, saved places)
+        window.addEventListener("localActivitiesChanged", onLocal);
+        window.addEventListener("savedPlacesChanged", onLocal);
+      } catch (e) {
+        console.error("[Sync] init failed", e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(debounceTimer);
+      try {
+        window.removeEventListener("localActivitiesChanged", onLocal);
+        window.removeEventListener("savedPlacesChanged", onLocal);
+      } catch {}
+      try { if (unsub) unsub(); } catch {}
+    };
+  }, [enabled, configText, shareCode, getActivities, getSavedPlaces, setFromRemote]);
+}
+ {
   const startedRef = React.useRef(false);
   const debRef = React.useRef<any>(null);
 
