@@ -31,6 +31,68 @@ const LS_DEVICE = "trip_planner_device_id";
 /* =========
    Utilities
    ========= */
+// ---- Canonical helpers to prevent write loops ----
+function canonActivities(arr: any[]) {
+  const list = Array.isArray(arr) ? arr : [];
+  return list
+    .map((a: any) => ({
+      id: String(a.id || ""),
+      date: String(a.date || ""),
+      time: a.time ? String(a.time) : null,
+      durationMinutes: typeof a.durationMinutes === "number" ? a.durationMinutes : (a.durationMinutes ? Number(a.durationMinutes) : null),
+      title: String(a.title || ""),
+      city: a.city ? String(a.city) : null,
+      location: a.location ? String(a.location) : null,
+      comments: a.comments ? String(a.comments) : null,
+      link: a.link ? String(a.link) : null,
+      type: String(a.type || "activity"),
+      updatedAt: typeof a.updatedAt === "number" ? a.updatedAt : null,
+    }))
+    .sort((x, y) => x.id.localeCompare(y.id));
+}
+
+function canonSavedPlaces(arr: any[]) {
+  const list = Array.isArray(arr) ? arr : [];
+  const norm = list
+    .filter((ft: any) =>
+      ft &&
+      ft.geometry &&
+      ft.geometry.type === "Point" &&
+      Array.isArray(ft.geometry.coordinates) &&
+      ft.geometry.coordinates.length >= 2
+    )
+    .map((ft: any) => {
+      const lng = Number(ft.geometry.coordinates[0]);
+      const lat = Number(ft.geometry.coordinates[1]);
+      const properties = ft.properties || {};
+      // limit to stable, small set of fields so order/extra keys don't cause churn
+      const props = {
+        name: properties.location?.name ?? properties.name ?? properties.title ?? null,
+        address: properties.location?.address ?? properties.address ?? null,
+        google_maps_url: properties.google_maps_url ?? null,
+      };
+      return {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [Number(lng.toFixed(6)), Number(lat.toFixed(6))] },
+        properties: props,
+      };
+    });
+
+  // sort for stable ordering
+  return norm.sort((a: any, b: any) => {
+    const ak = `${a.geometry.coordinates[1].toFixed(6)},${a.geometry.coordinates[0].toFixed(6)}|${a.properties.name ?? ""}`;
+    const bk = `${b.geometry.coordinates[1].toFixed(6)},${b.geometry.coordinates[0].toFixed(6)}|${b.properties.name ?? ""}`;
+    return ak.localeCompare(bk);
+  });
+}
+
+function stableHashData(activities: any[], saved: any[]) {
+  return JSON.stringify({
+    activities: canonActivities(activities),
+    saved_places: canonSavedPlaces(saved),
+  });
+}
+
 const pad = (n: number) => String(n).padStart(2, "0");
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -246,13 +308,13 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
      return () => window.removeEventListener("savedPlacesSyncSet", apply as any);
    }, []);
 
-  React.useEffect(() => {
-     localStorage.setItem(LS_SAVED, JSON.stringify(savedPlaces));
-     // tell the app layer that saved places changed (used by sync)
-     try {
-       window.dispatchEvent(new CustomEvent("savedPlacesChanged", { detail: savedPlaces }));
-     } catch {}
-   }, [savedPlaces]);
+ React.useEffect(() => {
+  const canon = canonSavedPlaces(savedPlaces || []);
+  localStorage.setItem(LS_SAVED, JSON.stringify(canon));
+  try {
+    window.dispatchEvent(new CustomEvent("savedPlacesChanged", { detail: canon }));
+  } catch {}
+}, [savedPlaces]);
 
 
   function onImportGeoJSON(files: FileList | null) {
@@ -288,6 +350,14 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
     if (showActs)  for (const p of activityPins) map.set(keyFrom(p.coord), { kind:"activity", title:p.a.title, url:p.a.location||"", coord:p.coord, address:p.a.city||"", activity:p.a });
     return Array.from(map.values());
   }, [activityPins, savedPins, showActs, showSaved]);
+   
+   const pinsKey = React.useMemo(
+     () => mergedPins
+        .map(p => `${p.kind}|${p.title||""}|${p.coord.lat.toFixed(6)},${p.coord.lng.toFixed(6)}`)
+        .sort()
+        .join("|"),
+     [mergedPins]
+   );
 
   React.useEffect(()=> {
     if (!apiKey) return;
@@ -313,7 +383,7 @@ function MapView({ apiKey, items }: { apiKey: string; items: Activity[] }) {
       });
     }).catch(err=> console.error(err));
     return ()=> { markers.forEach(m=> m.setMap(null)); };
-  }, [apiKey, mergedPins]);
+  }, [apiKey, pinsKey]);
 
   return (
     <div>
@@ -638,21 +708,8 @@ function useFirebaseSync({
   const applyingRemoteRef = React.useRef(false);
   const lastSentHashRef   = React.useRef<string>("");
 
-  const normalizeActs = (arr: any[]) =>
-    (Array.isArray(arr) ? arr.slice() : [])
-      .map(a => ({ ...a }))
-      .sort((a,b) => String(a.id||"").localeCompare(String(b.id||"")));
-
   const stableHash = (payload: { activities: any[]; saved_places: any[] }) =>
-    JSON.stringify({
-      activities: normalizeActs(payload.activities).map(a => ({
-        id:a.id, date:a.date, time:a.time ?? null,
-        durationMinutes:a.durationMinutes ?? null, title:a.title,
-        city:a.city ?? null, location:a.location ?? null,
-        comments:a.comments ?? null, link:a.link ?? null, type:a.type
-      })),
-      saved_places: payload.saved_places ?? [],
-    });
+  stableHashData(payload.activities, payload.saved_places);
 
   // debounced writer
   const queueWrite = () => {
@@ -669,12 +726,12 @@ function useFirebaseSync({
         if (nextHash === lastSentHashRef.current) return;
 
         await docRef.set({
-          activities: acts,
-          saved_places: saved,
-          updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-          last_write_device: deviceIdRef.current,
-          version: 2
-        }, { merge: true });
+           activities: canonActivities(acts || []),
+           saved_places: canonSavedPlaces(saved || []),
+           updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+           last_write_device: deviceIdRef.current,
+           version: 3
+         }, { merge: true });
 
         lastSentHashRef.current = nextHash;
       } catch (e) {
@@ -732,13 +789,13 @@ function useFirebaseSync({
 
         if (localHash !== remoteHash && (localActs.length > 0 || localSaved.length > 0)) {
           // Push LOCAL up (so your fresh work wins on refresh)
-          await docRef.set({
-            activities: localActs,
-            saved_places: localSaved,
-            updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-            last_write_device: deviceIdRef.current,
-            version: 2
-          }, { merge: true });
+         await docRef.set({
+           activities: canonActivities(getActivities() || localActs || []),
+           saved_places: canonSavedPlaces(getSavedPlaces() || localSaved || []),
+           updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+           last_write_device: deviceIdRef.current,
+           version: 3
+         }, { merge: true });
 
           lastSentHashRef.current = localHash;
           applyingRemoteRef.current = true;
@@ -758,7 +815,7 @@ function useFirebaseSync({
           const d = s.data() || {};
           const acts  = Array.isArray(d.activities) ? d.activities : [];
           const saved = Array.isArray(d.saved_places) ? d.saved_places : [];
-          const incomingHash = stableHash({ activities: acts, saved_places: saved });
+          const incomingHash = stableHashData(acts, saved);
           if (incomingHash === lastSentHashRef.current) return;
 
           applyingRemoteRef.current = true;
