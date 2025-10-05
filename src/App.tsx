@@ -624,11 +624,13 @@ function useFirebaseSync({
   getActivities: () => any[]; getSavedPlaces: () => any[]; setFromRemote: (d: any) => void;
 }) {
   const debRef = React.useRef<any>(null);
-  const deviceIdRef = React.useRef<string>(() => {
-    let id = localStorage.getItem(LS_DEVICE);
-    if (!id) { id = Math.random().toString(36).slice(2,10); localStorage.setItem(LS_DEVICE, id); }
-    return id;
-  }) as React.MutableRefObject<string>;
+   const getDeviceId = () => {
+     let id = localStorage.getItem(LS_DEVICE);
+     if (!id) { id = Math.random().toString(36).slice(2,10); localStorage.setItem(LS_DEVICE, id); }
+     return id;
+   };
+   const deviceIdRef = React.useRef<string>(getDeviceId());
+
 
   const firebaseRef = React.useRef<any>(null);
   const docRefRef   = React.useRef<any>(null);
@@ -704,7 +706,7 @@ function useFirebaseSync({
         // Wait until we actually have a user before touching Firestore
         await auth.signInAnonymously();
         await new Promise<void>((resolve, reject) => {
-          const off = auth.onAuthStateChanged(u => {
+          const off = auth.onAuthStateChanged((u: any) => {
             off();
             if (u) resolve(); else reject(new Error("Anon auth failed"));
           });
