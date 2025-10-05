@@ -411,7 +411,6 @@ function cancelEditing() {
   setForm({ date: todayStr(), type: "activity" });
 }
   
-  function updateActivity(id: string, patch: Partial<Activity>) { setItems(prev => prev.map(x=> x.id===id? { ...x, ...patch } : x)); }
   function removeActivity(id: string) { setItems(prev => prev.filter(x=> x.id!==id)); }
   function startEdit(a: Activity) {
   setEditingId(a.id);
