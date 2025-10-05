@@ -409,10 +409,6 @@ export default function App() {
     return ()=> window.removeEventListener("savedPlacesChanged", onSaved as any);
   }, []);
 
-  function applySavedPlacesFromRemote(arr:any[]) {
-    window.dispatchEvent(new CustomEvent("savedPlacesSyncSet", { detail: Array.isArray(arr)? arr : [] }));
-  }
-
   // Start Firebase sync
   useFirebaseSync({
     enabled: syncEnabled,
