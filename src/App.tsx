@@ -98,12 +98,28 @@ function Button({ children, onClick, variant, className }: { children: React.Rea
 }
 function Card({ children }: { children: React.ReactNode }) { return <div className="bg-white rounded-2xl border border-neutral-200 p-4 md:p-6 mb-6">{children}</div>; }
 function Input(props: any) {
-  return (<div className="mb-3">{props.label && <div className="text-sm font-medium mb-1">{props.label}</div>}
-    <input {...props} className={`w-full rounded-2xl border border-neutral-300 px-3 py-2 outline-none focus:ring-2 focus:ring-neutral-400 ${props.className||""}`} /></div>);
+  const { className = "", ...rest } = props;
+  return (
+    <div className="mb-3 min-w-0">
+      {props.label && <div className="text-sm font-medium mb-1">{props.label}</div>}
+      <input
+        {...rest}
+        className={`block w-full max-w-full min-w-0 rounded-2xl border border-neutral-300 px-3 py-2 outline-none focus:ring-2 focus:ring-neutral-400 ${className}`}
+      />
+    </div>
+  );
 }
 function TextArea(props: any) {
-  return (<div className="mb-3">{props.label && <div className="text-sm font-medium mb-1">{props.label}</div>}
-    <textarea {...props} className={`w-full rounded-2xl border border-neutral-300 px-3 py-2 outline-none focus:ring-2 focus:ring-neutral-400 ${props.className||""}`} /></div>);
+  const { className = "", ...rest } = props;
+  return (
+    <div className="mb-3 min-w-0">
+      {props.label && <div className="text-sm font-medium mb-1">{props.label}</div>}
+      <textarea
+        {...rest}
+        className={`block w-full max-w-full min-w-0 rounded-2xl border border-neutral-300 px-3 py-2 outline-none focus:ring-2 focus:ring-neutral-400 ${className}`}
+      />
+    </div>
+  );
 }
 function Header({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
@@ -479,7 +495,7 @@ function cancelEditing() {
             <div className="text-sm text-neutral-500 mb-4">
                {editingId ? "Update the fields and save your changes." : "Fill in the fields and click Add activity."}
             </div>
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid md:grid-cols-2 gap-4 min-w-0">
               <Input label="Date" type="date" value={form.date||""} onChange={(e:any)=>setForm(f=>({ ...f, date:e.target.value }))} />
               <Input label="Time" type="time" value={form.time||""} onChange={(e:any)=>setForm(f=>({ ...f, time:e.target.value }))} />
               <Input label="Title" value={form.title||""} onChange={(e:any)=>setForm(f=>({ ...f, title:e.target.value }))} placeholder="e.g., Prado Museum" />
