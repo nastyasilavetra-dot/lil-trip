@@ -372,10 +372,14 @@ React.useEffect(() => {
   React.useEffect(()=> { itemsRef.current = items; window.dispatchEvent(new Event("localActivitiesChanged")); }, [items]);
 
   React.useEffect(()=> {
-    localStorage.setItem(LS_FB_CFG, fbConfigText||"");
-    localStorage.setItem(LS_FB_SHARE, fbShareCode||"");
-    localStorage.setItem(LS_FB_SYNC, String(syncEnabled));
-  }, [fbConfigText, fbShareCode, syncEnabled]);
+  localStorage.setItem(LS_FB_CFG, fbConfigText||"");
+  localStorage.setItem(LS_FB_SHARE, fbShareCode||"");
+  localStorage.setItem(LS_FB_SYNC, String(syncEnabled));
+  // when enabling, immediately “poke” sync to attempt a write
+  if (syncEnabled) {
+    try { window.dispatchEvent(new Event("localActivitiesChanged")); } catch {}
+  }
+}, [fbConfigText, fbShareCode, syncEnabled]);
 
   // Saved places bridge for sync
   const savedRef = React.useRef<any[]>([]);
@@ -619,58 +623,46 @@ function useFirebaseSync({
   enabled: boolean; configText: string; shareCode: string;
   getActivities: () => any[]; getSavedPlaces: () => any[]; setFromRemote: (d: any) => void;
 }) {
-  const startedRef = React.useRef(false);
   const debRef = React.useRef<any>(null);
-
-  // device id (tag writes, avoid echo)
-  const getDeviceId = () => {
+  const deviceIdRef = React.useRef<string>(() => {
     let id = localStorage.getItem(LS_DEVICE);
-    if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem(LS_DEVICE, id); }
+    if (!id) { id = Math.random().toString(36).slice(2,10); localStorage.setItem(LS_DEVICE, id); }
     return id;
-  };
-  const deviceIdRef = React.useRef<string>(getDeviceId());
+  }) as React.MutableRefObject<string>;
 
-  // internal refs
   const firebaseRef = React.useRef<any>(null);
   const docRefRef   = React.useRef<any>(null);
   const readyRef    = React.useRef(false);
   const applyingRemoteRef = React.useRef(false);
   const lastSentHashRef   = React.useRef<string>("");
 
-  // if a local change arrives before init finishes, we set this flag
-  const pendingWriteRef = React.useRef(false);
-
   const normalizeActs = (arr: any[]) =>
     (Array.isArray(arr) ? arr.slice() : [])
       .map(a => ({ ...a }))
-      .sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
+      .sort((a,b) => String(a.id||"").localeCompare(String(b.id||"")));
 
   const stableHash = (payload: { activities: any[]; saved_places: any[] }) =>
     JSON.stringify({
       activities: normalizeActs(payload.activities).map(a => ({
-        id: a.id, date: a.date, time: a.time ?? null,
-        durationMinutes: a.durationMinutes ?? null, title: a.title,
-        city: a.city ?? null, location: a.location ?? null,
-        comments: a.comments ?? null, link: a.link ?? null, type: a.type
+        id:a.id, date:a.date, time:a.time ?? null,
+        durationMinutes:a.durationMinutes ?? null, title:a.title,
+        city:a.city ?? null, location:a.location ?? null,
+        comments:a.comments ?? null, link:a.link ?? null, type:a.type
       })),
       saved_places: payload.saved_places ?? [],
     });
 
-  // declare first so we can call it from init
-  const onLocalChange = () => {
+  // debounced writer
+  const queueWrite = () => {
     const firebase = firebaseRef.current;
     const docRef   = docRefRef.current;
-
-    // if init not finished yet, remember to save afterwards
-    if (!readyRef.current) { pendingWriteRef.current = true; return; }
-    if (applyingRemoteRef.current) return;
-    if (!enabled || !shareCode || !firebase || !docRef) return;
+    if (!enabled || !firebase || !docRef || !readyRef.current || applyingRemoteRef.current) return;
 
     clearTimeout(debRef.current);
     debRef.current = setTimeout(async () => {
       try {
-        const acts  = getActivities() || [];
-        const saved = getSavedPlaces() || [];
+        const acts  = getActivities()   || [];
+        const saved = getSavedPlaces()  || [];
         const nextHash = stableHash({ activities: acts, saved_places: saved });
         if (nextHash === lastSentHashRef.current) return;
 
@@ -684,18 +676,19 @@ function useFirebaseSync({
 
         lastSentHashRef.current = nextHash;
       } catch (e) {
-        console.error("[Sync] save failed", e);
+        console.error("[Sync] write failed:", e);
       }
-    }, 600);
+    }, 500);
   };
 
   React.useEffect(() => {
-    if (!enabled) return;
-    if (startedRef.current) return;
-    if (!configText || !shareCode) return;
-    startedRef.current = true;
-
+    // clean re-init whenever any dependency really changes
     let unsub: any = null;
+    readyRef.current = false;
+    lastSentHashRef.current = "";
+
+    if (!enabled) return;
+    if (!configText || !shareCode) return;
 
     (async () => {
       try {
@@ -704,16 +697,24 @@ function useFirebaseSync({
         firebaseRef.current = firebase;
 
         if (firebase.apps?.length) firebase.app(); else firebase.initializeApp(cfg);
+
         const db   = firebase.firestore();
         const auth = firebase.auth();
 
-        await auth.signInAnonymously().catch(() => {});
+        // Wait until we actually have a user before touching Firestore
+        await auth.signInAnonymously();
+        await new Promise<void>((resolve, reject) => {
+          const off = auth.onAuthStateChanged(u => {
+            off();
+            if (u) resolve(); else reject(new Error("Anon auth failed"));
+          });
+        });
 
         const docRef = db.collection("itineraries").doc(String(shareCode));
         docRefRef.current = docRef;
 
-        // INITIAL RECONCILIATION
-        const localActs  = getActivities() || [];
+        // 1) Initial reconciliation
+        const localActs  = getActivities()  || [];
         const localSaved = getSavedPlaces() || [];
         const localHash  = stableHash({ activities: localActs, saved_places: localSaved });
 
@@ -721,14 +722,14 @@ function useFirebaseSync({
         let remoteActs: any[] = [];
         let remoteSaved: any[] = [];
         if (snap.exists) {
-          const d = snap.data();
+          const d = snap.data() || {};
           remoteActs  = Array.isArray(d.activities) ? d.activities : [];
           remoteSaved = Array.isArray(d.saved_places) ? d.saved_places : [];
         }
         const remoteHash = stableHash({ activities: remoteActs, saved_places: remoteSaved });
 
         if (localHash !== remoteHash && (localActs.length > 0 || localSaved.length > 0)) {
-          // local differs and is not empty -> push local up
+          // Push LOCAL up (so your fresh work wins on refresh)
           await docRef.set({
             activities: localActs,
             saved_places: localSaved,
@@ -742,54 +743,49 @@ function useFirebaseSync({
           setFromRemote({ activities: localActs, saved_places: localSaved });
           applyingRemoteRef.current = false;
         } else {
-          // use remote as source
+          // Use remote as source
           applyingRemoteRef.current = true;
           setFromRemote({ activities: remoteActs, saved_places: remoteSaved });
           applyingRemoteRef.current = false;
           lastSentHashRef.current = remoteHash;
         }
 
-        // LIVE SUBSCRIBE
-        unsub = docRef.onSnapshot((s: any) => {
+        // 2) Live subscribe
+        unsub = docRef.onSnapshot((s:any) => {
           if (!s.exists) return;
           const d = s.data() || {};
           const acts  = Array.isArray(d.activities) ? d.activities : [];
           const saved = Array.isArray(d.saved_places) ? d.saved_places : [];
-
           const incomingHash = stableHash({ activities: acts, saved_places: saved });
           if (incomingHash === lastSentHashRef.current) return;
 
           applyingRemoteRef.current = true;
           setFromRemote({ activities: acts, saved_places: saved });
           applyingRemoteRef.current = false;
-
           lastSentHashRef.current = incomingHash;
         });
 
-        // mark ready, and if something changed locally during init, push it now
         readyRef.current = true;
-        if (pendingWriteRef.current) {
-          pendingWriteRef.current = false;
-          // small delay to ensure state has settled
-          setTimeout(onLocalChange, 50);
-        }
+
+        // 3) After init, force one write if local changed during init or is non-empty and differs
+        queueWrite();
       } catch (e) {
-        console.error("[Sync] init failed", e);
+        console.error("[Sync] init failed:", e);
       }
     })();
 
-    // listen for local changes
-    const poke = () => onLocalChange();
+    const poke = () => queueWrite();
     window.addEventListener("localActivitiesChanged", poke);
-    window.addEventListener("savedPlacesChanged", poke);
+    window.addEventListener("savedPlacesChanged",  poke);
 
     return () => {
       window.removeEventListener("localActivitiesChanged", poke);
-      window.removeEventListener("savedPlacesChanged", poke);
+      window.removeEventListener("savedPlacesChanged",  poke);
       if (unsub) unsub();
     };
   }, [enabled, configText, shareCode, getActivities, getSavedPlaces, setFromRemote]);
 }
+
 
 function loadFirebaseCompat(): Promise<any> {
   return new Promise((resolve, reject) => {
