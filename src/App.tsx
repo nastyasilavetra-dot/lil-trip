@@ -98,14 +98,27 @@ function Button({ children, onClick, variant, className }: { children: React.Rea
 }
 function Card({ children }: { children: React.ReactNode }) { return <div className="bg-white rounded-2xl border border-neutral-200 p-4 md:p-6 mb-6">{children}</div>; }
 function Input(props: any) {
-  const { className = "", ...rest } = props;
+  const { className = "", type, ...rest } = props;
+  const isNativePicker = type === "date" || type === "time";
+
   return (
     <div className="mb-3 min-w-0">
       {props.label && <div className="text-sm font-medium mb-1">{props.label}</div>}
-      <input
-        {...rest}
-        className={`block w-full max-w-full min-w-0 rounded-2xl border border-neutral-300 px-3 py-2 outline-none focus:ring-2 focus:ring-neutral-400 ${className}`}
-      />
+      {/* For date/time, give the WRAPPER the border and clip overflow */}
+      <div className={isNativePicker ? "rounded-2xl border border-neutral-300 overflow-hidden" : ""}>
+        <input
+          {...rest}
+          type={type}
+          className={
+            "block w-full max-w-full min-w-0 outline-none focus:ring-2 focus:ring-neutral-400 " +
+            (isNativePicker
+              ? "border-0 px-3 py-2"                    // input itself has no border; wrapper handles it
+              : "rounded-2xl border border-neutral-300 px-3 py-2") // normal inputs unchanged
+            + (className ? " " + className : "")
+          }
+          style={isNativePicker ? { WebkitAppearance: "none", appearance: "none" } : undefined}
+        />
+      </div>
     </div>
   );
 }
