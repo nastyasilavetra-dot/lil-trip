@@ -633,6 +633,21 @@ function useFirebaseSync({
           const d = s.data();
           setFromRemote({ activities: d.activities || [], saved_places: d.saved_places || [] });
         });
+         // Ensure a document exists by pushing current local state once
+         try {
+           await ref.set(
+             {
+            activities: getActivities() || [],
+            saved_places: getSavedPlaces() || [],
+            updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+            version: 1,
+             },
+          { merge: true }
+           );
+         } catch (e) {
+         console.error("[Sync] initial push failed", e);
+         }
+
       } catch (e) { console.error("[Sync] init failed", e); }
     })();
 
