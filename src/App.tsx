@@ -622,7 +622,7 @@ function useFirebaseSync({
   const startedRef = React.useRef(false);
   const debRef = React.useRef<any>(null);
 
-  // device id (used to tag writes and avoid echo)
+  // device id (tag writes, avoid echo)
   const getDeviceId = () => {
     let id = localStorage.getItem(LS_DEVICE);
     if (!id) { id = Math.random().toString(36).slice(2, 10); localStorage.setItem(LS_DEVICE, id); }
@@ -630,23 +630,63 @@ function useFirebaseSync({
   };
   const deviceIdRef = React.useRef<string>(getDeviceId());
 
-  // flags and refs to control loops
+  // internal refs
   const firebaseRef = React.useRef<any>(null);
-  const docRefRef = React.useRef<any>(null);
-  const readyRef = React.useRef(false);
+  const docRefRef   = React.useRef<any>(null);
+  const readyRef    = React.useRef(false);
   const applyingRemoteRef = React.useRef(false);
-  const lastSentHashRef = React.useRef<string>("");
+  const lastSentHashRef   = React.useRef<string>("");
+
+  // if a local change arrives before init finishes, we set this flag
+  const pendingWriteRef = React.useRef(false);
 
   const normalizeActs = (arr: any[]) =>
     (Array.isArray(arr) ? arr.slice() : [])
       .map(a => ({ ...a }))
       .sort((a, b) => String(a.id || "").localeCompare(String(b.id || "")));
 
-  const stableHash = (payload: { activities: any[]; saved_places: any[] }) => {
-    return JSON.stringify({
-      activities: normalizeActs(payload.activities),
+  const stableHash = (payload: { activities: any[]; saved_places: any[] }) =>
+    JSON.stringify({
+      activities: normalizeActs(payload.activities).map(a => ({
+        id: a.id, date: a.date, time: a.time ?? null,
+        durationMinutes: a.durationMinutes ?? null, title: a.title,
+        city: a.city ?? null, location: a.location ?? null,
+        comments: a.comments ?? null, link: a.link ?? null, type: a.type
+      })),
       saved_places: payload.saved_places ?? [],
     });
+
+  // declare first so we can call it from init
+  const onLocalChange = () => {
+    const firebase = firebaseRef.current;
+    const docRef   = docRefRef.current;
+
+    // if init not finished yet, remember to save afterwards
+    if (!readyRef.current) { pendingWriteRef.current = true; return; }
+    if (applyingRemoteRef.current) return;
+    if (!enabled || !shareCode || !firebase || !docRef) return;
+
+    clearTimeout(debRef.current);
+    debRef.current = setTimeout(async () => {
+      try {
+        const acts  = getActivities() || [];
+        const saved = getSavedPlaces() || [];
+        const nextHash = stableHash({ activities: acts, saved_places: saved });
+        if (nextHash === lastSentHashRef.current) return;
+
+        await docRef.set({
+          activities: acts,
+          saved_places: saved,
+          updated_at: firebase.firestore.FieldValue.serverTimestamp(),
+          last_write_device: deviceIdRef.current,
+          version: 2
+        }, { merge: true });
+
+        lastSentHashRef.current = nextHash;
+      } catch (e) {
+        console.error("[Sync] save failed", e);
+      }
+    }, 600);
   };
 
   React.useEffect(() => {
@@ -664,7 +704,7 @@ function useFirebaseSync({
         firebaseRef.current = firebase;
 
         if (firebase.apps?.length) firebase.app(); else firebase.initializeApp(cfg);
-        const db = firebase.firestore();
+        const db   = firebase.firestore();
         const auth = firebase.auth();
 
         await auth.signInAnonymously().catch(() => {});
@@ -672,24 +712,23 @@ function useFirebaseSync({
         const docRef = db.collection("itineraries").doc(String(shareCode));
         docRefRef.current = docRef;
 
-        // 1) Initial read and reconciliation
-        const localActs = getActivities() || [];
+        // INITIAL RECONCILIATION
+        const localActs  = getActivities() || [];
         const localSaved = getSavedPlaces() || [];
-        const localHash = stableHash({ activities: localActs, saved_places: localSaved });
+        const localHash  = stableHash({ activities: localActs, saved_places: localSaved });
 
         const snap = await docRef.get();
         let remoteActs: any[] = [];
         let remoteSaved: any[] = [];
         if (snap.exists) {
           const d = snap.data();
-          remoteActs = Array.isArray(d.activities) ? d.activities : [];
+          remoteActs  = Array.isArray(d.activities) ? d.activities : [];
           remoteSaved = Array.isArray(d.saved_places) ? d.saved_places : [];
         }
-
         const remoteHash = stableHash({ activities: remoteActs, saved_places: remoteSaved });
 
         if (localHash !== remoteHash && (localActs.length > 0 || localSaved.length > 0)) {
-          // Local has something different/new: push local to server
+          // local differs and is not empty -> push local up
           await docRef.set({
             activities: localActs,
             saved_places: localSaved,
@@ -699,27 +738,26 @@ function useFirebaseSync({
           }, { merge: true });
 
           lastSentHashRef.current = localHash;
-          // keep UI consistent with what we just wrote
           applyingRemoteRef.current = true;
           setFromRemote({ activities: localActs, saved_places: localSaved });
           applyingRemoteRef.current = false;
         } else {
-          // Use remote as source of truth
+          // use remote as source
           applyingRemoteRef.current = true;
           setFromRemote({ activities: remoteActs, saved_places: remoteSaved });
           applyingRemoteRef.current = false;
           lastSentHashRef.current = remoteHash;
         }
 
-        // 2) Live subscription (avoid echo by hashing)
+        // LIVE SUBSCRIBE
         unsub = docRef.onSnapshot((s: any) => {
           if (!s.exists) return;
           const d = s.data() || {};
-          const acts = Array.isArray(d.activities) ? d.activities : [];
+          const acts  = Array.isArray(d.activities) ? d.activities : [];
           const saved = Array.isArray(d.saved_places) ? d.saved_places : [];
 
           const incomingHash = stableHash({ activities: acts, saved_places: saved });
-          if (incomingHash === lastSentHashRef.current) return; // no-op
+          if (incomingHash === lastSentHashRef.current) return;
 
           applyingRemoteRef.current = true;
           setFromRemote({ activities: acts, saved_places: saved });
@@ -728,43 +766,19 @@ function useFirebaseSync({
           lastSentHashRef.current = incomingHash;
         });
 
+        // mark ready, and if something changed locally during init, push it now
         readyRef.current = true;
+        if (pendingWriteRef.current) {
+          pendingWriteRef.current = false;
+          // small delay to ensure state has settled
+          setTimeout(onLocalChange, 50);
+        }
       } catch (e) {
         console.error("[Sync] init failed", e);
       }
     })();
 
-    // 3) Local change handler with debounce and loop guard
-    const onLocalChange = () => {
-      const firebase = firebaseRef.current;
-      const docRef = docRefRef.current;
-      if (!enabled || !shareCode || !firebase || !docRef) return;
-      if (!readyRef.current) return;
-      if (applyingRemoteRef.current) return;
-
-      clearTimeout(debRef.current);
-      debRef.current = setTimeout(async () => {
-        try {
-          const acts = getActivities() || [];
-          const saved = getSavedPlaces() || [];
-          const nextHash = stableHash({ activities: acts, saved_places: saved });
-          if (nextHash === lastSentHashRef.current) return;
-
-          await docRef.set({
-            activities: acts,
-            saved_places: saved,
-            updated_at: firebase.firestore.FieldValue.serverTimestamp(),
-            last_write_device: deviceIdRef.current,
-            version: 2
-          }, { merge: true });
-
-          lastSentHashRef.current = nextHash;
-        } catch (e) {
-          console.error("[Sync] save failed", e);
-        }
-      }, 800);
-    };
-
+    // listen for local changes
     const poke = () => onLocalChange();
     window.addEventListener("localActivitiesChanged", poke);
     window.addEventListener("savedPlacesChanged", poke);
