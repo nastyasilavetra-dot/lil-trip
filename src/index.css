@@ -66,3 +66,27 @@ button:focus-visible {
     background-color: #f9f9f9;
   }
 }
+/* iOS Safari: make date/time inputs the same width as other fields */
+input[type="date"],
+input[type="time"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  position: relative;
+  -webkit-appearance: none; /* kill extra native padding that pushes past the card */
+  appearance: none;
+  border-radius: 1rem;      /* match .rounded-2xl */
+  padding-right: 2.25rem;   /* room for the indicator */
+}
+
+/* Keep the calendar/clock indicator inside the box */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  position: absolute;
+  right: 0.75rem;
+  margin: 0;
+  padding: 0;
+  opacity: .7;
+}
+
